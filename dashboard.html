@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICT BOT — Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080b10;
+    --surface:   #0d1117;
+    --surface2:  #131a24;
+    --border:    rgba(255,255,255,0.06);
+    --border2:   rgba(255,255,255,0.12);
+    --green:     #00e5a0;
+    --green-dim: rgba(0,229,160,0.12);
+    --red:       #ff4466;
+    --red-dim:   rgba(255,68,102,0.12);
+    --gold:      #f0c060;
+    --gold-dim:  rgba(240,192,96,0.1);
+    --blue:      #4499ff;
+    --blue-dim:  rgba(68,153,255,0.1);
+    --text:      #e8edf5;
+    --muted:     #5a6478;
+    --muted2:    #8892a4;
+    --accent:    #00e5a0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Grid noise texture overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,160,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,160,0.015) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Ambient glow ── */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 800px;
+    height: 400px;
+    background: radial-gradient(ellipse, rgba(0,229,160,0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app { position: relative; z-index: 1; }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(8,11,16,0.9);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .brand-icon {
+    width: 36px; height: 36px;
+    background: var(--green);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    box-shadow: 0 0 20px rgba(0,229,160,0.4);
+  }
+
+  .brand-name {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  .brand-sub {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .clock {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    color: var(--muted2);
+    letter-spacing: 0.05em;
+  }
+
+  .clock span { color: var(--green); }
+
+  /* ── Status pill ── */
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 100px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    font-weight: 500;
+    text-transform: uppercase;
+    cursor: default;
+    transition: all 0.3s;
+  }
+
+  .status-pill.online {
+    background: var(--green-dim);
+    border: 1px solid rgba(0,229,160,0.3);
+    color: var(--green);
+  }
+
+  .status-pill.offline {
+    background: var(--red-dim);
+    border: 1px solid rgba(255,68,102,0.3);
+    color: var(--red);
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .status-dot.pulse { animation: pulse 2s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  /* ── Kill switch ── */
+  .kill-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    font-weight: 500;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: 1px solid rgba(255,68,102,0.35);
+    background: rgba(255,68,102,0.07);
+    color: var(--red);
+    transition: all 0.2s;
+  }
+
+  .kill-btn:hover {
+    background: rgba(255,68,102,0.18);
+    border-color: rgba(255,68,102,0.6);
+    box-shadow: 0 0 16px rgba(255,68,102,0.2);
+    transform: translateY(-1px);
+  }
+
+  .kill-btn:active { transform: translateY(0); }
+
+  .kill-btn.going-offline {
+    background: rgba(255,68,102,0.3);
+    animation: redpulse 0.5s infinite alternate;
+  }
+
+  @keyframes redpulse {
+    from { box-shadow: 0 0 8px rgba(255,68,102,0.3); }
+    to   { box-shadow: 0 0 24px rgba(255,68,102,0.6); }
+  }
+
+  /* ── Main layout ── */
+  .main {
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+
+  /* ── KPI Row ── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+  }
+
+  .kpi {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, transform 0.2s;
+    animation: fadeUp 0.5s both;
+  }
+
+  .kpi:hover {
+    border-color: var(--border2);
+    transform: translateY(-2px);
+  }
+
+  .kpi::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--kpi-accent, var(--green));
+    opacity: 0.6;
+  }
+
+  .kpi-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .kpi-value {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .kpi-sub {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted2);
+  }
+
+  .kpi-sub .pos { color: var(--green); }
+  .kpi-sub .neg { color: var(--red); }
+
+  /* ── Middle 3-col grid ── */
+  .mid-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr 1fr;
+    gap: 16px;
+  }
+
+  /* ── Panel ── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    animation: fadeUp 0.6s both;
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted2);
+  }
+
+  .panel-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 100px;
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(0,229,160,0.2);
+  }
+
+  .panel-body { padding: 16px 20px; }
+
+  /* ── Positions table ── */
+  .pos-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+  }
+
+  .pos-table th {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: left;
+    padding: 0 0 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pos-table td {
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: var(--muted2);
+  }
+
+  .pos-table tr:last-child td { border-bottom: none; }
+
+  .pos-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .type-buy  { color: var(--green); font-weight: 500; }
+  .type-sell { color: var(--red);   font-weight: 500; }
+  .pnl-pos   { color: var(--green); }
+  .pnl-neg   { color: var(--red); }
+
+  .sym-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 11px;
+  }
+
+  /* ── Mini equity chart ── */
+  .chart-wrap {
+    padding: 16px 20px 12px;
+    height: 180px;
+    position: relative;
+  }
+
+  canvas { width: 100% !important; }
+
+  /* ── Analytics grid ── */
+  .analytics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .stat-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+
+  .stat-box-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .stat-box-val {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  /* ── Progress bar ── */
+  .prog-wrap {
+    margin: 6px 0 12px;
+  }
+
+  .prog-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+
+  .prog-track {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .prog-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--green), var(--blue));
+    transition: width 1s ease;
+  }
+
+  .prog-fill.danger { background: linear-gradient(90deg, var(--gold), var(--red)); }
+
+  /* ── News feed ── */
+  .news-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+
+  .news-item:last-child { border-bottom: none; }
+
+  .news-impact {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-top: 4px;
+    flex-shrink: 0;
+  }
+
+  .news-impact.high   { background: var(--red);  box-shadow: 0 0 6px var(--red); }
+  .news-impact.medium { background: var(--gold); }
+  .news-impact.low    { background: var(--muted); }
+
+  .news-time {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--green);
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+
+  .news-title {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .news-cur {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* ── Trade log ── */
+  .log-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted2);
+    animation: slideIn 0.3s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .log-row:last-child { border-bottom: none; }
+
+  .log-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .log-time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .log-sym  { color: var(--text); font-weight: 500; }
+  .log-type-b { color: var(--green); }
+  .log-type-s { color: var(--red); }
+
+  /* ── Bottom row ── */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 16px;
+  }
+
+  /* ── Pair heatmap ── */
+  .heat-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+
+  .heat-cell {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .heat-cell::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--cell-color, transparent);
+    opacity: 0.12;
+  }
+
+  .heat-cell:hover { transform: scale(1.04); border-color: var(--border2); }
+
+  .heat-sym {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+
+  .heat-bias {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .heat-bias.bull { color: var(--green); background: var(--green-dim); }
+  .heat-bias.bear { color: var(--red);   background: var(--red-dim); }
+  .heat-bias.neut { color: var(--muted); background: var(--surface); }
+
+  .heat-sessions {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  /* ── Session indicator ── */
+  .session-row {
+    display: flex;
+    gap: 8px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .session-pill {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    padding: 5px 12px;
+    border-radius: 100px;
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    transition: all 0.3s;
+  }
+
+  .session-pill.active {
+    border-color: rgba(0,229,160,0.4);
+    background: var(--green-dim);
+    color: var(--green);
+    box-shadow: 0 0 12px rgba(0,229,160,0.15);
+  }
+
+  .session-pill.dead {
+    opacity: 0.4;
+  }
+
+  /* ── Animations ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .kpi:nth-child(1) { animation-delay: 0.05s; }
+  .kpi:nth-child(2) { animation-delay: 0.10s; }
+  .kpi:nth-child(3) { animation-delay: 0.15s; }
+  .kpi:nth-child(4) { animation-delay: 0.20s; }
+  .kpi:nth-child(5) { animation-delay: 0.25s; }
+
+  /* ── Modal ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8,11,16,0.85);
+    backdrop-filter: blur(8px);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+
+  .modal-overlay.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid rgba(255,68,102,0.3);
+    border-radius: 18px;
+    padding: 36px 40px;
+    width: 380px;
+    text-align: center;
+    transform: scale(0.9);
+    transition: transform 0.3s;
+    box-shadow: 0 0 60px rgba(255,68,102,0.15);
+  }
+
+  .modal-overlay.show .modal { transform: scale(1); }
+
+  .modal-icon { font-size: 40px; margin-bottom: 16px; }
+  .modal-title { font-size: 20px; font-weight: 800; margin-bottom: 8px; color: var(--red); }
+  .modal-text { font-size: 13px; color: var(--muted2); line-height: 1.6; margin-bottom: 28px; }
+
+  .modal-actions { display: flex; gap: 12px; justify-content: center; }
+
+  .modal-btn {
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted2);
+  }
+
+  .modal-btn:hover { border-color: var(--border2); color: var(--text); }
+
+  .modal-btn.confirm {
+    background: rgba(255,68,102,0.15);
+    border-color: rgba(255,68,102,0.4);
+    color: var(--red);
+  }
+
+  .modal-btn.confirm:hover {
+    background: rgba(255,68,102,0.25);
+    box-shadow: 0 0 16px rgba(255,68,102,0.2);
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+  .empty-state {
+    text-align: center;
+    padding: 24px 0;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Tooltip ── */
+  .tooltip {
+    position: relative;
+    cursor: help;
+  }
+  .tooltip::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .tooltip:hover::after { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Top bar ── -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-name">ICT Command</div>
+        <div class="brand-sub">Smart Money Engine v2.1</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="clock">UTC <span id="clock">--:--:--</span></div>
+      <div class="status-pill online" id="statusPill">
+        <div class="status-dot pulse" id="statusDot"></div>
+        <span id="statusText">LIVE</span>
+      </div>
+      <button class="kill-btn" id="killBtn" onclick="confirmShutdown()">
+        ⏻ &nbsp;Take Offline
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- ── KPI Row ── -->
+    <div class="kpi-row">
+      <div class="kpi" style="--kpi-accent: var(--green)">
+        <div class="kpi-label">Account Balance</div>
+        <div class="kpi-value" id="balance">$4,991.36</div>
+        <div class="kpi-sub">USD · Live Account</div>
+      </div>
+      <div class="kpi" style="--kpi-accent: var(--blue)">
+        <div class="kpi-label">Equity</div>
+        <div class="kpi-value" id="equity">$4,991.36</div>
+        <div class="kpi-sub" id="equityDiff">— no open exposure</div>
+      </div>
+      <div class="kpi" style="--kpi-accent: var(--gold)">
+        <div class="kpi-label">Open P&amp;L</div>
+        <div class="kpi-value" id="openPnl">$0.00</div>
+        <div class="kpi-sub" id="openPnlSub">0 active positions</div>
+      </div>
+      <div class="kpi" style="--kpi-accent: var(--green)">
+        <div class="kpi-label">Today's P&amp;L</div>
+        <div class="kpi-value" id="dailyPnl">$0.00</div>
+        <div class="kpi-sub" id="dailySub">0 / 10 trades</div>
+      </div>
+      <div class="kpi" style="--kpi-accent: var(--blue)">
+        <div class="kpi-label">Win Rate</div>
+        <div class="kpi-value" id="winrate">—</div>
+        <div class="kpi-sub" id="winrateSub">All-time: 0 trades</div>
+      </div>
+    </div>
+
+    <!-- ── Session bar ── -->
+    <div class="panel" style="padding:0">
+      <div class="session-row" id="sessionRow">
+        <div class="session-pill dead" id="sess-asia">🌏 Asia  00:00 – 07:00</div>
+        <div class="session-pill" id="sess-london">🇬🇧 London Open  07:00 – 10:00</div>
+        <div class="session-pill" id="sess-ny">🇺🇸 NY Open  12:00 – 15:00</div>
+        <div class="session-pill" id="sess-lc">🔔 London Close  15:00 – 17:00</div>
+        <div class="session-pill dead" id="sess-dead">⛔ Dead Zone  17:00 – 07:00</div>
+        <div style="margin-left:auto; display:flex; align-items:center; gap:8px">
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">KILL ZONE</span>
+          <div class="session-pill active" id="killZoneStatus">NY OPEN</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Mid grid ── -->
+    <div class="mid-grid">
+
+      <!-- Positions -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Open Positions</div>
+          <div class="panel-badge" id="posCount">0 Open</div>
+        </div>
+        <div class="panel-body" style="padding:0 20px 16px">
+          <table class="pos-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Type</th>
+                <th>Vol</th>
+                <th>Entry</th>
+                <th>P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody id="posBody">
+              <tr><td colspan="5" class="empty-state">No open positions</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Equity chart -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Equity Curve</div>
+          <div class="panel-badge" id="totalPnlBadge">+$0.00 All-Time</div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="equityChart"></canvas>
+        </div>
+        <div style="display:flex; gap:0; border-top:1px solid var(--border)">
+          <div style="flex:1; padding:12px 20px; border-right:1px solid var(--border)">
+            <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:4px">Avg Win</div>
+            <div style="font-size:16px;font-weight:700;color:var(--green)" id="avgWin">—</div>
+          </div>
+          <div style="flex:1; padding:12px 20px; border-right:1px solid var(--border)">
+            <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:4px">Avg Loss</div>
+            <div style="font-size:16px;font-weight:700;color:var(--red)" id="avgLoss">—</div>
+          </div>
+          <div style="flex:1; padding:12px 20px">
+            <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:4px">Expectancy</div>
+            <div style="font-size:16px;font-weight:700;color:var(--blue)" id="expectancy">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analytics + News -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Analytics</div>
+        </div>
+        <div class="panel-body">
+          <div class="analytics-grid">
+            <div class="stat-box" style="--kpi-accent:var(--green)">
+              <div class="stat-box-label">Daily Trades</div>
+              <div class="stat-box-val" id="aDailyTrades">0</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-box-label">Max Trades</div>
+              <div class="stat-box-val" style="color:var(--muted2)">10</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-box-label">Risk/Trade</div>
+              <div class="stat-box-val" style="color:var(--gold)">1%</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-box-label">Max DD</div>
+              <div class="stat-box-val" style="color:var(--red)">3%</div>
+            </div>
+          </div>
+          <!-- Daily loss guard -->
+          <div class="prog-wrap" style="margin-top:14px">
+            <div class="prog-label">
+              <span>Daily Loss Guard</span>
+              <span id="ddLabel">$0.00 / $149.74</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" id="ddBar" style="width:0%"></div>
+            </div>
+          </div>
+          <!-- Trade usage -->
+          <div class="prog-wrap">
+            <div class="prog-label">
+              <span>Trade Slots Used</span>
+              <span id="slotsLabel">0 / 10</span>
+            </div>
+            <div class="prog-track">
+              <div class="prog-fill" id="slotsBar" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel-head" style="border-top:1px solid var(--border); border-bottom:none; padding-top:14px">
+          <div class="panel-title">📰 Upcoming News</div>
+        </div>
+        <div class="panel-body" style="padding-top:4px" id="newsBody">
+          <div class="empty-state" style="padding:12px 0">No high-impact events in next 2 hours</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Bottom row ── -->
+    <div class="bottom-row">
+
+      <!-- Pair heatmap -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Pair Bias Monitor</div>
+          <div class="panel-badge">H4 Bias</div>
+        </div>
+        <div class="panel-body">
+          <div class="heat-grid" id="heatGrid">
+            <!-- generated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Trade Log -->
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Trade Log</div>
+          <div class="panel-badge" id="logCount">0 today</div>
+        </div>
+        <div class="panel-body" id="tradeLog" style="max-height:200px;overflow-y:auto">
+          <div class="empty-state">No trades executed today</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Shutdown Modal ── -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-icon">⚠️</div>
+    <div class="modal-title">Take Bot Offline?</div>
+    <div class="modal-text">
+      This will stop all scanning and signal generation.<br>
+      Open positions will <strong>not</strong> be closed automatically — you'll need to manage them manually in MT5.
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn" onclick="cancelShutdown()">Cancel</button>
+      <button class="modal-btn confirm" onclick="executeShutdown()">⏻ Go Offline</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════════
+//  STATE  — replace these values from your bot_engine.get_status()
+//  In production: fetch('/api/status') every 5s
+// ════════════════════════════════════════════════════════════════
+let botOnline = true;
+
+let state = {
+  account: {
+    balance:  4991.36,
+    equity:   4991.36,
+    profit:   0.00,
+    currency: "USD",
+    leverage: 100,
+  },
+  stats: {
+    trades:       0,
+    wins:         0,
+    losses:       0,
+    winrate:      0,
+    total_pnl:    0,
+    daily_pnl:    0,
+    avg_win:      0,
+    avg_loss:     0,
+    expectancy:   0,
+    daily_trades: 0,
+  },
+  positions: [],
+  upcoming_news: [],
+  // Simulated equity history (replace with real data from bot journal)
+  equity_history: [4991.36],
+  trade_log: [],       // {time, symbol, type, setup, pnl, lot}
+  pair_biases: {
+    EURUSD: 'BULLISH',
+    GBPUSD: 'BEARISH',
+    US30:   'NEUTRAL',
+    NAS100: 'BULLISH',
+    XAUUSD: 'BEARISH',
+  }
+};
+
+// ── Clock ──────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getUTCHours()).padStart(2,'0');
+  const m = String(now.getUTCMinutes()).padStart(2,'0');
+  const s = String(now.getUTCSeconds()).padStart(2,'0');
+  document.getElementById('clock').textContent = `${h}:${m}:${s}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Kill zone session detection ────────────────────────────────
+function getKillZone() {
+  const now = new Date();
+  const h = now.getUTCHours();
+  const m = now.getUTCMinutes();
+  const t = h + m / 60;
+  if (t >= 7  && t < 10) return 'LONDON_OPEN';
+  if (t >= 12 && t < 15) return 'NY_OPEN';
+  if (t >= 15 && t < 17) return 'LONDON_CLOSE';
+  return 'DEAD_ZONE';
+}
+
+function updateSessions() {
+  const kz = getKillZone();
+  const sessions = {
+    'sess-london': kz === 'LONDON_OPEN',
+    'sess-ny':     kz === 'NY_OPEN',
+    'sess-lc':     kz === 'LONDON_CLOSE',
+  };
+  Object.entries(sessions).forEach(([id, active]) => {
+    const el = document.getElementById(id);
+    el.classList.toggle('active', active);
+    el.classList.toggle('dead', !active);
+  });
+  const kzStatus = document.getElementById('killZoneStatus');
+  const labels = {
+    LONDON_OPEN:  '🟢 London Open',
+    NY_OPEN:      '🟢 NY Open',
+    LONDON_CLOSE: '🟢 London Close',
+    DEAD_ZONE:    '⛔ Dead Zone',
+  };
+  kzStatus.textContent = labels[kz];
+  kzStatus.className = 'session-pill ' + (kz === 'DEAD_ZONE' ? 'dead' : 'active');
+}
+setInterval(updateSessions, 10000);
+updateSessions();
+
+// ── Equity Chart ───────────────────────────────────────────────
+const ctx = document.getElementById('equityChart').getContext('2d');
+const chartData = {
+  labels: state.equity_history.map((_, i) => i),
+  datasets: [{
+    data: state.equity_history,
+    borderColor: '#00e5a0',
+    borderWidth: 2,
+    tension: 0.4,
+    fill: true,
+    backgroundColor: (context) => {
+      const gradient = context.chart.ctx.createLinearGradient(0, 0, 0, 140);
+      gradient.addColorStop(0, 'rgba(0,229,160,0.2)');
+      gradient.addColorStop(1, 'rgba(0,229,160,0)');
+      return gradient;
+    },
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    pointHoverBackgroundColor: '#00e5a0',
+  }]
+};
+
+const equityChart = new Chart(ctx, {
+  type: 'line',
+  data: chartData,
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 800, easing: 'easeInOutQuart' },
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#131a24',
+        borderColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        titleFont: { family: 'DM Mono', size: 10 },
+        bodyFont:  { family: 'DM Mono', size: 12 },
+        callbacks: {
+          label: (ctx) => `  Equity: $${ctx.raw.toFixed(2)}`,
+          title: (items) => `Trade #${items[0].label}`
+        }
+      }
+    },
+    scales: {
+      x: { display: false },
+      y: {
+        display: true,
+        position: 'right',
+        grid: { color: 'rgba(255,255,255,0.04)', drawBorder: false },
+        ticks: {
+          color: '#5a6478',
+          font: { family: 'DM Mono', size: 9 },
+          callback: (v) => '$' + v.toFixed(0),
+          maxTicksLimit: 4,
+        }
+      }
+    }
+  }
+});
+
+// ── Render KPIs ────────────────────────────────────────────────
+function fmt(n, prefix='$') {
+  const sign = n >= 0 ? '+' : '';
+  return `${sign}${prefix}${Math.abs(n).toFixed(2)}`;
+}
+
+function renderKPIs() {
+  const { account, stats } = state;
+  document.getElementById('balance').textContent = `$${account.balance.toLocaleString('en-US', {minimumFractionDigits:2})}`;
+  document.getElementById('equity').textContent  = `$${account.equity.toLocaleString('en-US', {minimumFractionDigits:2})}`;
+
+  const equityDiff = account.equity - account.balance;
+  const eqEl = document.getElementById('equityDiff');
+  eqEl.textContent = equityDiff === 0 ? '— no open exposure' : `${equityDiff >= 0 ? '+' : ''}$${equityDiff.toFixed(2)} floating`;
+  eqEl.className = 'kpi-sub ' + (equityDiff > 0 ? 'pos' : equityDiff < 0 ? 'neg' : '');
+
+  const pnlEl = document.getElementById('openPnl');
+  pnlEl.textContent = `${account.profit >= 0 ? '+' : ''}$${account.profit.toFixed(2)}`;
+  pnlEl.style.color = account.profit > 0 ? 'var(--green)' : account.profit < 0 ? 'var(--red)' : '';
+
+  const dpEl = document.getElementById('dailyPnl');
+  dpEl.textContent = `${stats.daily_pnl >= 0 ? '+' : ''}$${stats.daily_pnl.toFixed(2)}`;
+  dpEl.style.color = stats.daily_pnl > 0 ? 'var(--green)' : stats.daily_pnl < 0 ? 'var(--red)' : '';
+
+  document.getElementById('dailySub').textContent = `${stats.daily_trades} / 10 trades`;
+
+  const wr = stats.winrate;
+  const wrEl = document.getElementById('winrate');
+  wrEl.textContent = wr > 0 ? `${wr.toFixed(1)}%` : '—';
+  wrEl.style.color = wr >= 60 ? 'var(--green)' : wr >= 45 ? 'var(--gold)' : wr > 0 ? 'var(--red)' : '';
+  document.getElementById('winrateSub').textContent = `All-time: ${stats.trades} trades`;
+
+  // Analytics panel
+  document.getElementById('aDailyTrades').textContent = stats.daily_trades;
+
+  const maxLoss = account.balance * 0.03;
+  const ddPct = stats.daily_pnl < 0 ? (Math.abs(stats.daily_pnl) / maxLoss * 100) : 0;
+  document.getElementById('ddLabel').textContent = `$${Math.abs(stats.daily_pnl).toFixed(2)} / $${maxLoss.toFixed(2)}`;
+  const ddBar = document.getElementById('ddBar');
+  ddBar.style.width = Math.min(ddPct, 100) + '%';
+  ddBar.className = 'prog-fill' + (ddPct > 66 ? ' danger' : '');
+
+  const slotPct = (stats.daily_trades / 10) * 100;
+  document.getElementById('slotsLabel').textContent = `${stats.daily_trades} / 10`;
+  document.getElementById('slotsBar').style.width = slotPct + '%';
+
+  // Chart footer stats
+  document.getElementById('avgWin').textContent = stats.avg_win > 0 ? `+$${stats.avg_win.toFixed(2)}` : '—';
+  document.getElementById('avgLoss').textContent = stats.avg_loss < 0 ? `-$${Math.abs(stats.avg_loss).toFixed(2)}` : '—';
+  document.getElementById('expectancy').textContent = stats.expectancy !== 0 ? `$${stats.expectancy.toFixed(2)}` : '—';
+
+  const tpnl = stats.total_pnl;
+  document.getElementById('totalPnlBadge').textContent = `${tpnl >= 0 ? '+' : ''}$${tpnl.toFixed(2)} All-Time`;
+}
+
+// ── Render Positions ───────────────────────────────────────────
+function renderPositions() {
+  const tbody = document.getElementById('posBody');
+  document.getElementById('posCount').textContent = `${state.positions.length} Open`;
+  document.getElementById('openPnlSub').textContent = `${state.positions.length} active position${state.positions.length !== 1 ? 's' : ''}`;
+
+  if (!state.positions.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state" style="padding:20px 0">No open positions</td></tr>';
+    return;
+  }
+  tbody.innerHTML = state.positions.map(p => {
+    const pnlCls = p.profit > 0 ? 'pnl-pos' : p.profit < 0 ? 'pnl-neg' : '';
+    const pnlStr = `${p.profit >= 0 ? '+' : ''}$${p.profit.toFixed(2)}`;
+    return `
+      <tr>
+        <td><span class="sym-badge">${p.symbol}</span></td>
+        <td class="${p.type === 'BUY' ? 'type-buy' : 'type-sell'}">${p.type}</td>
+        <td style="color:var(--text)">${p.volume}</td>
+        <td>${p.open_price.toFixed(5)}</td>
+        <td class="${pnlCls}">${pnlStr}</td>
+      </tr>`;
+  }).join('');
+}
+
+// ── Render Equity Chart ────────────────────────────────────────
+function updateEquityChart() {
+  equityChart.data.labels = state.equity_history.map((_, i) => i);
+  equityChart.data.datasets[0].data = state.equity_history;
+
+  const max = Math.max(...state.equity_history);
+  const min = Math.min(...state.equity_history);
+  const isDown = state.equity_history[state.equity_history.length-1] < state.equity_history[0];
+  equityChart.data.datasets[0].borderColor = isDown ? '#ff4466' : '#00e5a0';
+  equityChart.update();
+}
+
+// ── Render Pair Heatmap ────────────────────────────────────────
+function renderHeatmap() {
+  const grid = document.getElementById('heatGrid');
+  grid.innerHTML = Object.entries(state.pair_biases).map(([sym, bias]) => {
+    const cls  = bias === 'BULLISH' ? 'bull' : bias === 'BEARISH' ? 'bear' : 'neut';
+    const icon = bias === 'BULLISH' ? '↑' : bias === 'BEARISH' ? '↓' : '—';
+    const col  = bias === 'BULLISH' ? 'var(--green)' : bias === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+    return `
+      <div class="heat-cell" style="--cell-color:${col}">
+        <div class="heat-sym">${sym}</div>
+        <div class="heat-bias ${cls}">${icon} ${bias.slice(0,4)}</div>
+        <div class="heat-sessions">H4 BIAS</div>
+      </div>`;
+  }).join('');
+}
+
+// ── Render News ────────────────────────────────────────────────
+function renderNews() {
+  const el = document.getElementById('newsBody');
+  if (!state.upcoming_news.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:12px 0">No high-impact events in next 2 hours</div>';
+    return;
+  }
+  el.innerHTML = state.upcoming_news.map(n => {
+    const impCls = n.impact === 'HIGH' ? 'high' : n.impact === 'MEDIUM' ? 'medium' : 'low';
+    return `
+      <div class="news-item">
+        <div class="news-impact ${impCls}"></div>
+        <div>
+          <div class="news-time">${n.time}</div>
+          <div class="news-title">${n.title}</div>
+          <div class="news-cur">${n.currency} · ${n.impact}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Render Trade Log ───────────────────────────────────────────
+function renderLog() {
+  const el = document.getElementById('tradeLog');
+  document.getElementById('logCount').textContent = `${state.trade_log.length} today`;
+  if (!state.trade_log.length) {
+    el.innerHTML = '<div class="empty-state">No trades executed today</div>';
+    return;
+  }
+  el.innerHTML = state.trade_log.slice().reverse().map(t => {
+    const pnlCls = t.pnl > 0 ? 'pnl-pos' : t.pnl < 0 ? 'pnl-neg' : '';
+    const dotColor = t.pnl > 0 ? 'var(--green)' : t.pnl < 0 ? 'var(--red)' : 'var(--muted)';
+    const pnlStr = t.pnl !== undefined ? ` · <span class="${pnlCls}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</span>` : '';
+    return `
+      <div class="log-row">
+        <div class="log-dot" style="background:${dotColor}"></div>
+        <span class="log-time">${t.time}</span>
+        <span class="log-sym">${t.symbol}</span>
+        <span class="${t.type === 'BUY' ? 'log-type-b' : 'log-type-s'}">${t.type}</span>
+        <span style="color:var(--muted);font-size:10px">${t.setup}</span>
+        <span style="margin-left:auto">${pnlStr}</span>
+      </div>`;
+  }).join('');
+}
+
+// ── Full render ────────────────────────────────────────────────
+function renderAll() {
+  renderKPIs();
+  renderPositions();
+  updateEquityChart();
+  renderHeatmap();
+  renderNews();
+  renderLog();
+}
+
+renderAll();
+
+// ════════════════════════════════════════════════════════════════
+//  SHUTDOWN FLOW
+// ════════════════════════════════════════════════════════════════
+function confirmShutdown() {
+  document.getElementById('modalOverlay').classList.add('show');
+}
+
+function cancelShutdown() {
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+function executeShutdown() {
+  document.getElementById('modalOverlay').classList.remove('show');
+  botOnline = false;
+
+  // Update UI immediately
+  const pill = document.getElementById('statusPill');
+  pill.className = 'status-pill offline';
+  document.getElementById('statusDot').classList.remove('pulse');
+  document.getElementById('statusText').textContent = 'OFFLINE';
+
+  const btn = document.getElementById('killBtn');
+  btn.textContent = '✓  Offline';
+  btn.style.opacity = '0.5';
+  btn.style.cursor = 'default';
+  btn.onclick = null;
+
+  document.getElementById('killZoneStatus').textContent = '⛔ BOT OFFLINE';
+  document.getElementById('killZoneStatus').className = 'session-pill dead';
+
+  // In production → POST /api/shutdown or send Ctrl+C signal to bot process
+  console.log('[ICT Dashboard] Bot shutdown requested at', new Date().toISOString());
+  // fetch('/api/shutdown', { method: 'POST' });
+}
+
+// Close modal on overlay click
+document.getElementById('modalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) cancelShutdown();
+});
+
+// ════════════════════════════════════════════════════════════════
+//  LIVE DATA BRIDGE
+//  Replace this block with: setInterval(() => fetch('/api/status')
+//  .then(r=>r.json()).then(data => { state = mergeState(data); renderAll(); }), 5000)
+// ════════════════════════════════════════════════════════════════
+function simulateLiveData() {
+  if (!botOnline) return;
+
+  // Simulate small equity fluctuations while scanning
+  const drift = (Math.random() - 0.5) * 0.5;
+  state.account.equity = parseFloat((state.account.equity + drift).toFixed(2));
+  state.equity_history.push(state.account.equity);
+  if (state.equity_history.length > 80) state.equity_history.shift();
+
+  renderAll();
+}
+
+setInterval(simulateLiveData, 5000);
+</script>
+</body>
+</html>
