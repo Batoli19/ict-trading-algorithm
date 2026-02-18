@@ -1,0 +1,10 @@
+# Sensitive config
+config/settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Logs
+logs/
+*.log

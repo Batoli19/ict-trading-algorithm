@@ -150,35 +150,46 @@ class MT5Connector:
         price  = tick["ask"] if order_type == "BUY" else tick["bid"]
         action = mt5.ORDER_TYPE_BUY if order_type == "BUY" else mt5.ORDER_TYPE_SELL
 
+        # Try without SL/TP first, add them after if needed
         request = {
             "action":       mt5.TRADE_ACTION_DEAL,
             "symbol":       symbol,
             "volume":       volume,
             "type":         action,
             "price":        price,
-            "sl":           round(sl, 5),
-            "tp":           round(tp, 5),
-            "deviation":    10,
+            "deviation":    50,  # Large deviation for market orders
             "magic":        20250101,
             "comment":      comment,
             "type_time":    mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
         }
+        
+        # Don't specify type_filling - let MT5 choose automatically
 
         result = mt5.order_send(request)
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            err = mt5.last_error() if result is None else result.comment
+            err = mt5.last_error() if result is None else f"Code {result.retcode}: {result.comment}"
             logger.error(f"❌  Order failed on {symbol}: {err}")
             return None
 
+        ticket = result.order
         logger.info(f"✅  ORDER PLACED | {order_type} {volume} {symbol} | "
-                    f"Price: {price} | SL: {sl} | TP: {tp} | Ticket: {result.order}")
+                    f"Price: {result.price} | Ticket: {ticket}")
+        
+        # Now add SL/TP via modify
+        if sl > 0 or tp > 0:
+            time.sleep(0.5)  # Brief pause before modify
+            modify_result = self.modify_sl_tp(ticket, sl, tp)
+            if modify_result:
+                logger.info(f"✅  SL/TP added | SL: {sl} | TP: {tp}")
+            else:
+                logger.warning(f"⚠️  Trade opened but SL/TP failed to set")
+        
         return {
-            "ticket":  result.order,
+            "ticket":  ticket,
             "symbol":  symbol,
             "type":    order_type,
             "volume":  volume,
-            "price":   price,
+            "price":   result.price,
             "sl":      sl,
             "tp":      tp,
             "time":    datetime.utcnow(),
@@ -208,11 +219,10 @@ class MT5Connector:
             "type":         order_type,
             "position":     ticket,
             "price":        price,
-            "deviation":    10,
+            "deviation":    50,
             "magic":        20250101,
             "comment":      "ICT_BOT_CLOSE",
             "type_time":    mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         result = mt5.order_send(request)
@@ -232,7 +242,12 @@ class MT5Connector:
             "tp":       round(tp, 5),
         }
         result = mt5.order_send(request)
-        return result is not None and result.retcode == mt5.TRADE_RETCODE_DONE
+        if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+            return True
+        else:
+            if result:
+                logger.debug(f"Modify SL/TP failed: {result.comment}")
+            return False
 
     # ── Positions ──────────────────────────────────────────────────────────────
     def get_open_positions(self) -> list:

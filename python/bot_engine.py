@@ -161,7 +161,11 @@ class TradingEngine:
 
         # Calculate position size
         lot = self.risk.calculate_lot_size(
-            signal.symbol, signal.entry, signal.sl, balance
+            symbol=signal.symbol,
+            entry=signal.entry,
+            sl=signal.sl,
+            tp=signal.tp,
+            account_balance=balance
         )
 
         if lot < 0.01:
@@ -183,6 +187,9 @@ class TradingEngine:
             self.risk.record_open(result, signal.setup_type.value, signal.reason)
             self._last_signals[signal.symbol] = datetime.utcnow()
 
+            # Check kill zone for notification
+            in_kill_zone, kz_name = self.strategy.in_kill_zone()
+
             # Notify
             await self.notifier.send(
                 f"🤖 NEW TRADE\n"
@@ -196,6 +203,7 @@ class TradingEngine:
                 f"Lot:   {lot}\n"
                 f"RR:    1:{signal.rr}\n"
                 f"Conf:  {signal.confidence:.0%}\n"
+                f"Zone:  {kz_name}\n"
                 f"Reason: {signal.reason}"
             )
 
@@ -233,12 +241,38 @@ class TradingEngine:
         stats     = self.risk.get_stats()
         upcoming  = self.news.get_upcoming(2)
 
+        # Get H4 bias for all pairs (for Command Center heatmap)
+        pair_biases = {}
+        for symbol in self.pairs:
+            try:
+                candles_h4 = self.mt5.get_candles(symbol, "H4", 50)
+                if candles_h4 and len(candles_h4) >= 30:
+                    bias = self.strategy.get_htf_bias(candles_h4)
+                    pair_biases[symbol] = bias.value  # 'BULLISH', 'BEARISH', 'NEUTRAL'
+            except Exception as e:
+                logger.debug(f"Could not get bias for {symbol}: {e}")
+                pair_biases[symbol] = "NEUTRAL"
+        
+        # Build trade log from journal (for Command Center trade log)
+        trade_log = []
+        for record in self.risk.journal[-20:]:  # Last 20 trades
+            trade_log.append({
+                'time': record.open_time.strftime('%H:%M:%S'),
+                'symbol': record.symbol,
+                'type': record.direction,
+                'setup': record.setup_type,
+                'pnl': record.pnl,
+                'lot': record.volume,
+            })
+
         return {
             "timestamp": datetime.utcnow().isoformat(),
             "account":   account,
             "positions": positions,
             "stats":     stats,
             "connected": self.mt5.connected,
+            "pair_biases": pair_biases,
+            "trade_log": trade_log,
             "upcoming_news": [
                 {
                     "time":     e.time.strftime("%H:%M"),

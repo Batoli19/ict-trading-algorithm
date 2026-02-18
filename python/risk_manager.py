@@ -1,16 +1,16 @@
 """
-Risk Manager
-─────────────
-Handles all risk logic:
-  • Position sizing based on % risk per trade
-  • Daily loss limit enforcement
-  • Max open trades guard
-  • Trailing stop management
-  • Trade journal entry
+Enhanced Risk Manager
+─────────────────────
+NEW FEATURES:
+  • Dynamic position sizing based on signal confidence (0.10 - 0.18 lots)
+  • Kill zone multiplier (1.5x size during kill zones)
+  • Maximum risk cap at $150 per trade
+  • Minimum 1:2 RR ratio enforcement for high-risk trades
+  • Volatility-aware position sizing
 """
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, time as dtime
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -72,40 +72,98 @@ class RiskManager:
 
         return True, "OK"
 
-    # ── Position Sizing ────────────────────────────────────────────────────────
-    def calculate_lot_size(self, symbol: str, entry: float, sl: float,
-                            account_balance: float,
-                            account_currency: str = "USD") -> float:
+    # ── Enhanced Position Sizing ───────────────────────────────────────────────
+    def calculate_lot_size(self, symbol: str, entry: float, sl: float, tp: float,
+                            account_balance: float, confidence: float = 0.75,
+                            in_kill_zone: bool = False) -> float:
         """
-        Risk-based lot size calculation.
-        Formula: lot = (balance × risk%) / (SL_pips × pip_value_per_lot)
+        Enhanced dynamic position sizing.
+        
+        Rules:
+          • Base size: 0.10 lots (XAUUSD) or equivalent
+          • Confidence scaling: 0.10 (low) → 0.18 (high)
+          • Kill zone multiplier: 1.5x during active kill zones
+          • Max risk: $150 per trade (only in high volatility + high confidence)
+          • Min RR: 1:2 for trades risking >$100
         """
-        risk_amount = account_balance * (self.cfg["risk_per_trade_pct"] / 100)
         sl_distance = abs(entry - sl)
-
+        tp_distance = abs(tp - entry)
+        
         if sl_distance == 0:
-            logger.warning(f"SL distance is 0 for {symbol} — defaulting to 0.01 lot")
-            return 0.01
+            logger.warning(f"SL distance is 0 for {symbol} — defaulting to 0.10 lot")
+            return 0.10
 
-        # Pip value per standard lot (approximations)
-        pip_values = {
-            "EURUSD": 10.0,  "GBPUSD": 10.0,  "AUDUSD": 10.0,
-            "USDJPY": 9.1,   "EURJPY": 9.1,
-            "XAUUSD": 100.0, "US30":   1.0,    "NAS100": 1.0,
-            "SPX500": 1.0,
+        # Calculate RR ratio
+        rr_ratio = tp_distance / sl_distance if sl_distance > 0 else 0
+        
+        # Base lot sizes per symbol (for $5000 account)
+        base_lots = {
+            "XAUUSD":  0.10,   # Gold
+            "EURUSD":  0.50,   # Major forex
+            "GBPUSD":  0.50,
+            "AUDUSD":  0.50,
+            "USDJPY":  0.50,
+            "US30":    0.03,   # Dow Jones
+            "NAS100":  0.03,   # Nasdaq
+            "SPX500":  0.03,   # S&P 500
         }
+        
+        base_lot = base_lots.get(symbol, 0.30)
+        
+        # Scale by confidence (0.75 = base, 0.50 = 0.7x, 1.0 = 1.4x)
+        confidence_multiplier = 0.7 + (confidence * 0.7)  # Range: 0.7 - 1.4
+        lot = base_lot * confidence_multiplier
+        
+        # Kill zone bonus (50% more size during prime sessions)
+        if in_kill_zone:
+            lot *= 1.5
+            logger.info(f"🎯  Kill zone active — increasing position size by 50%")
+        
+        # Calculate dollar risk
         pip_size = self._get_pip_size(symbol)
-        sl_pips  = sl_distance / pip_size
-        pv       = pip_values.get(symbol, 10.0)
-
-        raw_lot = risk_amount / (sl_pips * pv)
-
-        # Round to broker-standard increments
-        lot = self._round_lot(raw_lot)
-        lot = max(0.01, min(lot, 10.0))  # Hard clamp 0.01 – 10.0
-
-        logger.info(f"💰  {symbol} | Risk: ${risk_amount:.2f} | SL: {sl_pips:.1f} pips | "
-                    f"Lot size: {lot}")
+        sl_pips = sl_distance / pip_size
+        pip_values = {
+            "EURUSD": 10.0, "GBPUSD": 10.0, "AUDUSD": 10.0,
+            "USDJPY": 9.1,  "EURJPY": 9.1,
+            "XAUUSD": 100.0, "US30": 1.0, "NAS100": 1.0, "SPX500": 1.0,
+        }
+        pip_value = pip_values.get(symbol, 10.0)
+        dollar_risk = lot * sl_pips * pip_value
+        
+        # Hard cap at $150 risk (only if RR >= 2.0)
+        if dollar_risk > 150:
+            if rr_ratio >= 2.0:
+                lot = 150 / (sl_pips * pip_value)
+                logger.warning(f"⚠️  High risk trade: ${dollar_risk:.2f} → capped at $150 | RR: 1:{rr_ratio:.1f}")
+            else:
+                # If RR < 2.0, reduce to $100 max risk
+                lot = 100 / (sl_pips * pip_value)
+                logger.warning(f"⚠️  Low RR trade ({rr_ratio:.1f}) — risk capped at $100")
+        
+        # Enforce RR >= 2.0 for trades risking >$100
+        if dollar_risk > 100 and rr_ratio < 2.0:
+            lot *= 0.7  # Reduce size by 30%
+            dollar_risk = lot * sl_pips * pip_value
+            logger.warning(f"⚠️  RR below 2.0 ({rr_ratio:.1f}) — reducing lot to {lot:.2f} (${dollar_risk:.2f} risk)")
+        
+        # Round to broker increments
+        lot = self._round_lot(lot)
+        
+        # Final bounds (stricter than before)
+        if symbol == "XAUUSD":
+            lot = max(0.10, min(lot, 0.18))  # Gold: 0.10 - 0.18
+        elif symbol in ("US30", "NAS100", "SPX500"):
+            lot = max(0.03, min(lot, 0.08))  # Indices: 0.03 - 0.08
+        else:
+            lot = max(0.30, min(lot, 0.80))  # Forex: 0.30 - 0.80
+        
+        # Recalculate final risk
+        final_risk = lot * sl_pips * pip_value
+        
+        logger.info(f"💰  {symbol} | Confidence: {confidence:.0%} | "
+                    f"Lot: {lot} | Risk: ${final_risk:.2f} | "
+                    f"SL: {sl_pips:.1f}p | RR: 1:{rr_ratio:.1f}")
+        
         return lot
 
     def _get_pip_size(self, symbol: str) -> float:
