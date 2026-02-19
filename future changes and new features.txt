@@ -1,0 +1,39 @@
+Strategy-level advice (the brutal but useful part)
+Your strategy logic is “feature rich”… but it will overtrade unless you gate it
+
+You’re trading 6 pairs right now. Your original plan was gold-focused. If you’re going multi-pair:
+
+Add hard quality filters, not just “confidence”.
+
+I’d add these gates before any entry is even allowed:
+
+ATR / volatility regime filter (avoid dead chop and news spikes)
+
+session filter (killzone is good, but require volatility confirmation)
+
+“one trade per symbol per session” rule
+
+do not allow SCALP unless spread and volatility are perfect
+
+Right now, SCALP triggers too easily (“3 lower closes”) → this will spam in chop.
+
+
+Phase 2 — Reduce bad trades
+
+Add volatility gate (ATR)
+
+Add “signal de-duplication” + cooldown on failure
+
+Add strict news blackout windows around HIGH impact events
+
+Phase 3 — Make it measurable + improve it
+
+Wire in TradingMemoryDB and store:
+
+snapshot features (spread, ATR, bias score, kz, setup type)
+
+Report metrics by setup type:
+
+win rate, expectancy, avg RR, max DD
+
+Kill any setup that’s negative expectancy 

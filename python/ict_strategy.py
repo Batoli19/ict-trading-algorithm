@@ -924,3 +924,111 @@ class ICTStrategy:
             f"RR: {best.rr} | {best.reason}"
         )
         return best
+"""
+ICT Strategy — Tight Stop Calculation Example
+───────────────────────────────────────────────
+Shows how to calculate 5-8 pip stops using RAW PRICE levels
+(not bid/ask, which gets adjusted later in MT5 connector)
+
+Add this helper method to your ICTStrategy class.
+"""
+
+def calculate_tight_stop_and_tp(self, symbol: str, direction: Direction,
+                                 entry_candle: dict, rr_ratio: float = 2.5) -> tuple:
+    """
+    Calculate ultra-tight SL and TP using candle structure.
+    
+    For BUY:
+      • SL: Below candle low - 3 pips buffer
+      • TP: Entry + (SL distance × RR ratio)
+    
+    For SELL:
+      • SL: Above candle high + 3 pips buffer
+      • TP: Entry - (SL distance × RR ratio)
+    
+    Returns: (entry_price, sl_price, tp_price) as RAW PRICE LEVELS
+    """
+    pip_size = self.get_pip_size(symbol)
+    buffer_pips = 3  # Safety buffer beyond candle high/low
+    
+    # Use MID-PRICE for entry (average of bid/ask)
+    # In real execution, MT5 connector will use bid/ask
+    entry_price = (entry_candle["close"] + entry_candle["open"]) / 2
+    
+    if direction == Direction.BULLISH:
+        # SL: Just below candle low
+        sl_price = entry_candle["low"] - (pip_size * buffer_pips)
+        
+        # Calculate TP based on RR
+        risk = entry_price - sl_price
+        tp_price = entry_price + (risk * rr_ratio)
+        
+        # Verify stop is reasonable (5-10 pips ideal)
+        stop_pips = risk / pip_size
+        if stop_pips > 15:
+            logger.warning(f"Stop too wide ({stop_pips:.1f}p), using max 12 pips")
+            sl_price = entry_price - (pip_size * 12)
+            risk = entry_price - sl_price
+            tp_price = entry_price + (risk * rr_ratio)
+        
+    else:  # BEARISH
+        # SL: Just above candle high
+        sl_price = entry_candle["high"] + (pip_size * buffer_pips)
+        
+        # Calculate TP
+        risk = sl_price - entry_price
+        tp_price = entry_price - (risk * rr_ratio)
+        
+        # Verify stop
+        stop_pips = risk / pip_size
+        if stop_pips > 15:
+            logger.warning(f"Stop too wide ({stop_pips:.1f}p), using max 12 pips")
+            sl_price = entry_price + (pip_size * 12)
+            risk = sl_price - entry_price
+            tp_price = entry_price - (risk * rr_ratio)
+    
+    # Log the setup
+    stop_pips_final = abs(entry_price - sl_price) / pip_size
+    tp_pips_final = abs(tp_price - entry_price) / pip_size
+    actual_rr = tp_pips_final / stop_pips_final if stop_pips_final > 0 else 0
+    
+    logger.debug(f"{symbol} {direction.value} | Entry: {entry_price:.5f} | "
+                 f"SL: {sl_price:.5f} ({stop_pips_final:.1f}p) | "
+                 f"TP: {tp_price:.5f} ({tp_pips_final:.1f}p) | RR: 1:{actual_rr:.1f}")
+    
+    return (entry_price, sl_price, tp_price)
+
+
+# USAGE EXAMPLE in sniper_entry method:
+def sniper_entry(self, candles_m5: list, symbol: str, bias: Direction) -> Optional[Signal]:
+    """Enhanced sniper with tight stops"""
+    if len(candles_m5) < 20:
+        return None
+    
+    recent = candles_m5[-20:]
+    last = recent[-1]
+    
+    # [Your existing discount/premium zone logic...]
+    
+    # When you find an entry:
+    if bias == Direction.BULLISH and last["close"] <= discount_zone:
+        body = abs(last["close"] - last["open"])
+        lower_wick = min(last["open"], last["close"]) - last["low"]
+        
+        if lower_wick > body * 1.2 and last["close"] > last["open"]:
+            # Use the new tight stop calculator
+            entry, sl, tp = self.calculate_tight_stop_and_tp(
+                symbol, Direction.BULLISH, last, rr_ratio=2.5
+            )
+            
+            return Signal(
+                symbol=symbol, direction=Direction.BULLISH,
+                setup_type=SetupType.SNIPER,
+                entry=entry, sl=sl, tp=tp,
+                confidence=0.88,
+                reason=f"Sniper entry at discount {entry:.5f}, tight {abs(entry-sl)/self.get_pip_size(symbol):.1f}p stop",
+                sniper_entry=True
+            )
+    
+    # Similar for bearish...
+    return None
