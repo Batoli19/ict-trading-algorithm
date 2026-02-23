@@ -28,6 +28,9 @@ This is a fully automated trading bot that watches the market 24/7, identifies h
 You configure it once, and it runs on its own — no need to sit at a screen all day.
 
 ---
+## documentation testing 
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/245eb0e9-8e6e-429f-ad14-71a3c2106bba" />
+
 
 ## 🧠 Trading Strategy
 
