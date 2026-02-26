@@ -285,8 +285,6 @@ class MT5Connector:
             return []
         trades = []
         for d in history:
-            if d.magic != 20250101:
-                continue
             deal_type = "BUY" if d.type == mt5.DEAL_TYPE_BUY else "SELL"
             position_id = getattr(d, "position_id", None) or getattr(d, "position", None)
             deal_entry = getattr(d, "entry", None)
@@ -299,6 +297,7 @@ class MT5Connector:
                     "symbol": d.symbol,
                     "type": deal_type,
                     "entry": deal_entry,
+                    "magic": getattr(d, "magic", None),
                     "volume": d.volume,
                     "price": d.price,
                     "profit": d.profit,

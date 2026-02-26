@@ -237,14 +237,18 @@ class TradingMemoryDB:
             deal_ticket = COALESCE(?, deal_ticket),
             order_ticket = COALESCE(?, order_ticket),
             position_id = COALESCE(?, position_id)
-        WHERE id = ?
+        WHERE id = ? AND outcome IS NULL
         """, (
             exit_price, resolved_exit_time, pnl, outcome,
             stop_hit_reason, tp_hit_reason, lessons,
             deal_ticket, order_ticket, position_id,
             trade_id
         ))
+        rows_affected = cursor.rowcount
         self.conn.commit()
+        if rows_affected == 0:
+            logger.warning(f"Exit update skipped; trade already closed id={trade_id} ticket={trade_ticket}")
+            return False
 
         setup_type = trade_row["setup_type"]
         if setup_type:
@@ -508,8 +512,8 @@ class TradingMemoryDB:
         lookup_chain = [
             ("position_id", position_id),
             ("order_ticket", order_ticket),
-            ("ticket", ticket),
             ("deal_ticket", deal_ticket),
+            ("ticket", ticket),
         ]
         for col, value in lookup_chain:
             if value is None:

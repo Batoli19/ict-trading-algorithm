@@ -13,7 +13,7 @@ Add this to bot_engine as a background task.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, Optional, Set
+from typing import Dict, Set
 
 import MetaTrader5 as mt5
 
@@ -36,6 +36,11 @@ class TradeAnalyzer:
         while not self.engine.shutdown.is_set():
             try:
                 self.engine.analyzer_last_tick = datetime.utcnow()
+                logger.info(
+                    "ANALYZER_TICK ts=%s running=%s",
+                    self.engine.analyzer_last_tick.isoformat(),
+                    self.engine.analyzer_running,
+                )
                 await self.analyze_recent_closes()
             except Exception as e:
                 logger.error(f"Analyzer error: {e}", exc_info=True)
@@ -56,12 +61,25 @@ class TradeAnalyzer:
         deal_entry = mt5_trade.get("entry")
         if deal_entry is None:
             return True
-        return deal_entry == mt5.DEAL_ENTRY_OUT
+        return deal_entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_OUT_BY)
     
     async def analyze_recent_closes(self):
         """Find and analyze recently closed trades"""
         # Get all closed trades from MT5 today
         today_trades = self.mt5.get_today_trades()
+        sample = [
+            {
+                "symbol": t.get("symbol"),
+                "position_id": t.get("position_id"),
+                "order_ticket": t.get("order_ticket"),
+                "deal_ticket": t.get("deal_ticket"),
+                "entry": t.get("entry"),
+                "profit": t.get("profit"),
+                "time": t.get("time"),
+            }
+            for t in today_trades[:3]
+        ]
+        logger.info("ANALYZER_DEALS count=%s sample=%s", len(today_trades), sample)
         
         for mt5_trade in today_trades:
             if not self._is_exit_deal(mt5_trade):
@@ -80,10 +98,23 @@ class TradeAnalyzer:
             )
             
             if not record:
+                logger.warning(
+                    "NO_DB_MATCH symbol=%s position_id=%s order_ticket=%s deal_ticket=%s entry=%s profit=%s time=%s",
+                    mt5_trade.get("symbol"),
+                    mt5_trade.get("position_id"),
+                    mt5_trade.get("order_ticket"),
+                    mt5_trade.get("deal_ticket"),
+                    mt5_trade.get("entry"),
+                    mt5_trade.get("profit"),
+                    mt5_trade.get("time"),
+                )
                 continue
             
-            await self._analyze_closed_trade(mt5_trade, record)
-            self._analyzed_keys.add(deal_key)
+            try:
+                await self._analyze_closed_trade(mt5_trade, record)
+                self._analyzed_keys.add(deal_key)
+            except Exception as e:
+                logger.error(f"Analyze closed trade failed: {e}", exc_info=True)
     
     async def _analyze_closed_trade(self, mt5_trade: dict, db_record: Dict):
         """Deep analysis of a closed trade"""
@@ -111,7 +142,15 @@ class TradeAnalyzer:
         }
         
         # Use AI brain to analyze the exit
-        analysis = self.brain.analyze_exit(trade_record, candles_m5)
+        try:
+            analysis = self.brain.analyze_exit(trade_record, candles_m5)
+        except Exception as e:
+            logger.error(f"Brain exit analysis failed: {e}", exc_info=True)
+            analysis = {
+                "stop_hit_reason": None,
+                "tp_hit_reason": None,
+                "lessons_learned": None,
+            }
         
         # Record the exit in memory
         pnl = mt5_trade['profit']
@@ -123,18 +162,22 @@ class TradeAnalyzer:
             except Exception:
                 exit_time = None
 
-        updated = self.memory.record_exit(
-            position_id=mt5_trade.get("position_id"),
-            order_ticket=mt5_trade.get("order_ticket"),
-            deal_ticket=mt5_trade.get("deal_ticket"),
-            ticket=ticket,
-            exit_price=mt5_trade['price'],
-            pnl=pnl,
-            exit_time=exit_time,
-            stop_hit_reason=analysis['stop_hit_reason'],
-            tp_hit_reason=analysis['tp_hit_reason'],
-            lessons=analysis['lessons_learned']
-        )
+        try:
+            updated = self.memory.record_exit(
+                position_id=mt5_trade.get("position_id"),
+                order_ticket=mt5_trade.get("order_ticket"),
+                deal_ticket=mt5_trade.get("deal_ticket"),
+                ticket=ticket,
+                exit_price=mt5_trade['price'],
+                pnl=pnl,
+                exit_time=exit_time,
+                stop_hit_reason=analysis['stop_hit_reason'],
+                tp_hit_reason=analysis['tp_hit_reason'],
+                lessons=analysis['lessons_learned']
+            )
+        except Exception as e:
+            logger.error(f"record_exit failed: {e}", exc_info=True)
+            raise
         if not updated:
             return
         logger.info(

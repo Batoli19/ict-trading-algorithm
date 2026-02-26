@@ -79,11 +79,13 @@ class TradingEngine:
         # ★ NEW: Add trade analyzer
         from trade_analyzer import TradeAnalyzer
         analyzer = TradeAnalyzer(self)
+        logger.info("Analyzer task creating...")
 
         scan_task     = asyncio.create_task(self._scan_loop())
         manage_task   = asyncio.create_task(self._manage_loop())
         news_task     = asyncio.create_task(self._news_loop())
         analyzer_task = asyncio.create_task(analyzer.run())  # ★ NEW
+        logger.info("Analyzer task started")
 
         await self.shutdown.wait()
 
