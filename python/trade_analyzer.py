@@ -12,7 +12,7 @@ Add this to bot_engine as a background task.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Set
 
 import MetaTrader5 as mt5
@@ -61,60 +61,101 @@ class TradeAnalyzer:
         deal_entry = mt5_trade.get("entry")
         if deal_entry is None:
             return True
-        return deal_entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_OUT_BY)
+        return deal_entry in (mt5.DEAL_ENTRY_OUT, getattr(mt5, "DEAL_ENTRY_OUT_BY", -999))
     
     async def analyze_recent_closes(self):
-        """Find and analyze recently closed trades"""
-        # Get all closed trades from MT5 today
-        today_trades = self.mt5.get_today_trades()
-        sample = [
-            {
-                "symbol": t.get("symbol"),
-                "position_id": t.get("position_id"),
-                "order_ticket": t.get("order_ticket"),
-                "deal_ticket": t.get("deal_ticket"),
-                "entry": t.get("entry"),
-                "profit": t.get("profit"),
-                "time": t.get("time"),
-            }
-            for t in today_trades[:3]
-        ]
-        logger.info("ANALYZER_DEALS count=%s sample=%s", len(today_trades), sample)
-        
-        for mt5_trade in today_trades:
-            if not self._is_exit_deal(mt5_trade):
+        """Find DB-recorded trades that are now closed and record exits."""
+        open_db_trades = self.memory.get_open_trades()
+        mt5_open_positions = self.mt5.get_open_positions()
+        mt5_open_keys = set()
+        for p in mt5_open_positions:
+            tk = p.get("ticket")
+            if tk is not None:
+                try:
+                    mt5_open_keys.add(int(tk))
+                except Exception:
+                    pass
+
+        logger.info("ANALYZER_OPEN_DB_TRADES count=%s", len(open_db_trades))
+        logger.info("ANALYZER_MT5_OPEN_POS count=%s", len(mt5_open_positions))
+
+        now = datetime.utcnow()
+        from_dt = now - timedelta(hours=48)
+        deals = self.mt5.get_deals_between(from_dt, now)
+        exit_deals = [d for d in deals if self._is_exit_deal(d)]
+
+        for db_trade in open_db_trades:
+            position_id = db_trade.get("position_id")
+            ticket = db_trade.get("ticket")
+            live_key = position_id if position_id is not None else ticket
+            if live_key is None:
                 continue
-            deal_key = self._deal_key(mt5_trade)
-            
-            # Skip if already analyzed
-            if deal_key in self._analyzed_keys:
+            try:
+                live_key_int = int(live_key)
+            except Exception:
                 continue
-            
-            record = self.memory.find_open_trade_for_exit(
-                position_id=mt5_trade.get("position_id"),
-                order_ticket=mt5_trade.get("order_ticket"),
-                ticket=mt5_trade.get("order_ticket"),
-                deal_ticket=mt5_trade.get("deal_ticket"),
-            )
-            
-            if not record:
+
+            if live_key_int in mt5_open_keys:
+                continue
+
+            mt5_trade = self._find_exit_deal_for_db_trade(db_trade, exit_deals)
+            if not mt5_trade:
                 logger.warning(
                     "NO_DB_MATCH symbol=%s position_id=%s order_ticket=%s deal_ticket=%s entry=%s profit=%s time=%s",
-                    mt5_trade.get("symbol"),
-                    mt5_trade.get("position_id"),
-                    mt5_trade.get("order_ticket"),
-                    mt5_trade.get("deal_ticket"),
-                    mt5_trade.get("entry"),
-                    mt5_trade.get("profit"),
-                    mt5_trade.get("time"),
+                    db_trade.get("symbol"),
+                    db_trade.get("position_id"),
+                    db_trade.get("order_ticket"),
+                    db_trade.get("deal_ticket"),
+                    None,
+                    None,
+                    db_trade.get("entry_time"),
                 )
                 continue
-            
+
+            deal_key = self._deal_key(mt5_trade)
+            if deal_key in self._analyzed_keys:
+                continue
+
             try:
-                await self._analyze_closed_trade(mt5_trade, record)
+                await self._analyze_closed_trade(mt5_trade, db_trade)
                 self._analyzed_keys.add(deal_key)
             except Exception as e:
                 logger.error(f"Analyze closed trade failed: {e}", exc_info=True)
+
+    def _find_exit_deal_for_db_trade(self, db_trade: Dict, deals: list[Dict]) -> Dict | None:
+        position_id = db_trade.get("position_id")
+        ticket = db_trade.get("ticket")
+        order_ticket = db_trade.get("order_ticket")
+        deal_ticket = db_trade.get("deal_ticket")
+        symbol = db_trade.get("symbol")
+
+        candidates = []
+        for d in deals:
+            if symbol and d.get("symbol") != symbol:
+                continue
+            d_pos = d.get("position_id")
+            d_ord = d.get("order_ticket")
+            d_deal = d.get("deal_ticket")
+            if position_id is not None and d_pos == position_id:
+                candidates.append((4, d))
+                continue
+            if position_id is not None and d_ord == position_id:
+                candidates.append((3, d))
+                continue
+            if ticket is not None and d_pos == ticket:
+                candidates.append((3, d))
+                continue
+            if order_ticket is not None and d_ord == order_ticket:
+                candidates.append((2, d))
+                continue
+            if deal_ticket is not None and d_deal == deal_ticket:
+                candidates.append((1, d))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (x[0], x[1].get("time") or ""), reverse=True)
+        return candidates[0][1]
     
     async def _analyze_closed_trade(self, mt5_trade: dict, db_record: Dict):
         """Deep analysis of a closed trade"""
@@ -141,18 +182,7 @@ class TradeAnalyzer:
             'outcome': None  # Will be determined
         }
         
-        # Use AI brain to analyze the exit
-        try:
-            analysis = self.brain.analyze_exit(trade_record, candles_m5)
-        except Exception as e:
-            logger.error(f"Brain exit analysis failed: {e}", exc_info=True)
-            analysis = {
-                "stop_hit_reason": None,
-                "tp_hit_reason": None,
-                "lessons_learned": None,
-            }
-        
-        # Record the exit in memory
+        # Record exit first; analysis must never block persistence.
         pnl = mt5_trade['profit']
         exit_time_raw = mt5_trade.get("time")
         exit_time = None
@@ -171,9 +201,9 @@ class TradeAnalyzer:
                 exit_price=mt5_trade['price'],
                 pnl=pnl,
                 exit_time=exit_time,
-                stop_hit_reason=analysis['stop_hit_reason'],
-                tp_hit_reason=analysis['tp_hit_reason'],
-                lessons=analysis['lessons_learned']
+                stop_hit_reason=None,
+                tp_hit_reason=None,
+                lessons=None
             )
         except Exception as e:
             logger.error(f"record_exit failed: {e}", exc_info=True)
@@ -189,16 +219,57 @@ class TradeAnalyzer:
             pnl,
             "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
         )
+        try:
+            sym = symbol
+            self.engine.cooldowns.on_exit(sym, float(pnl))
+        except Exception as e:
+            logger.error(f"Cooldown on_exit failed: {e}", exc_info=True)
+        try:
+            self.engine.hybrid_gate.on_trade_closed(
+                symbol=symbol,
+                pnl=float(pnl),
+                direction=db_record.get("direction"),
+                setup_type=db_record.get("setup_type"),
+            )
+        except Exception:
+            pass
+        try:
+            self.engine.risk.on_trade_closed(
+                symbol=symbol,
+                outcome="WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
+                pnl=float(pnl),
+                exit_time=exit_time or datetime.utcnow(),
+            )
+        except Exception as e:
+            logger.error(f"Risk on_trade_closed failed: {e}", exc_info=True)
+
+        analysis = None
+        try:
+            analysis = self.brain.analyze_exit(trade_record, candles_m5)
+        except Exception as e:
+            logger.error(f"Brain exit analysis failed: {e}", exc_info=True)
+
+        if analysis:
+            try:
+                self.memory.update_exit_analysis(
+                    trade_id=db_record.get("id"),
+                    ticket=ticket,
+                    stop_hit_reason=analysis.get("stop_hit_reason"),
+                    tp_hit_reason=analysis.get("tp_hit_reason"),
+                    lessons=analysis.get("lessons_learned"),
+                )
+            except Exception as e:
+                logger.error(f"update_exit_analysis failed: {e}", exc_info=True)
         
         # Log the learning
         outcome = "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BE"
         logger.info(f"🔬  Analyzed #{ticket} ({setup_type}): {outcome} | P&L: {pnl:+.2f}")
         
-        if analysis['stop_hit_reason']:
+        if analysis and analysis.get('stop_hit_reason'):
             logger.info(f"   └─ Stop: {analysis['stop_hit_reason']}")
-        if analysis['tp_hit_reason']:
+        if analysis and analysis.get('tp_hit_reason'):
             logger.info(f"   └─ TP: {analysis['tp_hit_reason']}")
-        if analysis['lessons_learned']:
+        if analysis and analysis.get('lessons_learned'):
             logger.info(f"   💡 Lesson: {analysis['lessons_learned']}")
         
         # Get updated confidence for this setup

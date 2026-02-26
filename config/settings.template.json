@@ -25,7 +25,7 @@
     "rr_ratio":            3.0,
     "trailing_stop":       true,
     "trailing_stop_pips":  20,
-    "max_risk_per_trade_usd": 150,
+    "max_risk_per_trade_usd": 60,
     "min_rr_for_high_risk": 2.0,
     "comment": "Enhanced dynamic sizing: 0.10-0.18 lots based on confidence, max $150 risk with 1:2 RR minimum"
   },

@@ -1,7 +1,7 @@
 {
   "mt5": {
-    "login":    103143434,
-    "password": "_1PnQwOz",
+    "login":    103498720,
+    "password":  "-0JuBpFh",
     "server":   "MetaQuotes-Demo",
     "timeout":  10000
   },
@@ -9,7 +9,7 @@
  
 
 
-  "pairs": ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDJPY", "XAUUSD"],
+  "pairs": ["EURUSD", "USDJPY", "XAUUSD", "USDCHF", "GBPUSD", "AUDUSD"],
 
   "timeframes": {
     "bias":   "H4",
@@ -17,18 +17,141 @@
     "trigger":"M5"
   },
 
+  "mode": {
+    "type": "hybrid",
+    "pairs_focus": ["XAUUSD", "EURUSD", "USDJPY", "USDCHF", "GBPUSD", "AUDUSD"],
+    "session_pair_rules": true,
+    "cooldown": {
+      "per_symbol_seconds": 900,
+      "after_loss_seconds": 1800,
+      "after_win_seconds": 600,
+      "global_after_loss_seconds": 900
+    }
+  },
+
+  "execution": {
+    "profile": "PROP_CHALLENGE",
+    "min_confidence": 0.68,
+    "min_rr": 2.0,
+    "rr_epsilon": 0.02,
+    "soft_discount_premium": true,
+    "dp_strict": false,
+    "dp_min_conf_if_not_dp": 0.72,
+    "soft_sl_cap": true,
+    "soft_sl_cap_allow_pct": 0.15,
+    "soft_sl_cap_risk_scale": 0.5,
+    "max_entry_distance_pips": {
+      "EURUSD": 3.0,
+      "XAUUSD": 30.0
+    },
+    "max_sl_pips": {
+      "EURUSD": 12.0,
+      "XAUUSD": 60.0
+    },
+    "max_sl_usd": 50,
+    "prop": {
+      "enabled": true,
+      "base_risk_per_trade_pct": 0.75,
+      "max_risk_per_trade_pct": 1.0,
+      "max_open_trades": 2,
+      "max_total_open_risk_pct": 1.5,
+      "max_daily_loss_pct": 2.5,
+      "daily_profit_lock_pct": 2.0,
+      "profit_lock_action": "DISABLE_LIVE_ENTRIES",
+      "after_profit_lock_mode": "PAPER_TRADE_LOG_ONLY",
+      "max_consecutive_losses_pause": 2,
+      "loss_pause_minutes": 120,
+      "max_consecutive_losses_stop": 3,
+      "stop_for_day_on_loss_streak": true
+    },
+    "ob_override_not_in_discount_premium": true,
+    "ob_override_min_confidence": 0.85,
+    "ob_override_requires_displacement": true,
+    "discount_premium_buffer_pct": 0.05,
+    "require_displacement": true,
+    "atr_period": 14,
+    "min_displacement_atr_mult": 0.8,
+    "avoid_chop": true,
+    "chop_lookback": 30,
+    "max_overlap_pct": 0.65,
+    "one_trade_per_symbol_per_killzone": true,
+    "reentry_requires_new_setup": true,
+    "enforce_killzones": false,
+    "per_symbol": {
+      "XAUUSD": {
+        "min_rr": 2.0,
+        "max_sl_pips": 60.0,
+        "max_entry_distance_pips": 30.0,
+        "require_discount_premium": true,
+        "allow_ob_premium_override": true,
+        "avoid_chop": true,
+        "max_overlap_pct": 0.62
+      },
+      "EURUSD": {
+        "min_rr": 2.0,
+        "max_sl_pips": 12.0,
+        "max_entry_distance_pips": 3.0,
+        "require_discount_premium": true,
+        "allow_ob_premium_override": false,
+        "avoid_chop": true,
+        "max_overlap_pct": 0.65
+      }
+    }
+  },
+
   "risk": {
-    "risk_per_trade_pct":  2.0,
-    "max_open_trades":     5,
-    "max_daily_loss_pct":  20,
-    "max_daily_trades":    30,
-    "rr_ratio":            3.0,
-    "trailing_stop":       true,
-    "trailing_stop_pips":  10,
-    "max_risk_per_trade_usd": 150,
-    "min_rr_for_high_risk": 2.0,
-    "tp_miss_protection_pips": 5
-    
+  "risk_per_trade_pct": 1.5,
+  "max_open_trades": 3,
+  "max_cumulative_loss_pct": 8,
+  "max_consecutive_losses": 3,
+  "loss_streak_cooldown_minutes": 60,
+  "max_trades_per_symbol_per_hour": 6,
+  "max_loss_trades_per_symbol_per_hour": 3,
+  "cooldown_win_minutes": 10,
+  "cooldown_loss_minutes": 45,
+  "cooldown_global_minutes": 3,
+  "loss_streak_threshold": 2,
+  "loss_streak_minutes": 120,
+  "equity_dd_pause_pct": 3.0,
+  "equity_dd_pause_minutes": 120,
+  "equity_dd_stop_pct": 5.0,
+  "xauusd_max_trades_per_day": 50,
+  "max_total_open_risk_pct": 3.0,
+  "max_daily_loss_pct": 5.0,
+  "max_daily_trades": 100,
+  "rr_ratio": 2.0,
+  "trailing_stop": true,
+  "trailing_stop_pips": 10,
+  "max_risk_per_trade_usd": 50  ,
+  "min_rr_for_high_risk": 2.0,
+  "tp_miss_protection_pips": 2,
+  "tp_miss_protection": {
+    "enabled": true,
+    "near_tp_pips": 2.0,
+    "lock_pct": 0.9,
+    "min_lock_pips": 1.0,
+    "spread_guard": true,
+    "max_spread_pips": 3.0,
+    "once_per_position": false
+  }
+
+  },
+
+  "hybrid": {
+    "enabled": true,
+    "trade_only_in_kill_zones": false,
+    "allowed_kill_zones": ["LONDON_OPEN", "NY_OPEN", "LONDON_CLOSE"],
+    "min_rr": 2.0,
+    "min_confidence": 0.65,
+    "cooldown_after_close_seconds": 900,
+    "cooldown_after_loss_seconds": 1800,
+    "cooldown_after_win_seconds": 600,
+    "max_trades_per_day_total": 12,
+    "max_trades_per_symbol_per_day": 3,
+    "max_trades_per_killzone_per_symbol": 1,
+    "max_open_trades": 3,
+    "block_reentry_same_direction": true,
+    "reentry_requires_new_setup": true
   },
 
   "ict": {

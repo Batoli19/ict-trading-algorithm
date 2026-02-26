@@ -133,6 +133,16 @@ class MT5Connector:
         point    = info.point
         return round(spread_points * point / pip_size, 2)
 
+    def get_symbol_info(self, symbol: str) -> Optional[dict]:
+        self.ensure_connected()
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return None
+        return {
+            "digits": int(getattr(info, "digits", 0) or 0),
+            "point": float(getattr(info, "point", 0.0) or 0.0),
+        }
+
     # ── Orders ─────────────────────────────────────────────────────────────────
     def place_market_order(self, symbol: str, order_type: str,
                            volume: float, sl: float, tp: float,
@@ -283,25 +293,33 @@ class MT5Connector:
         history = mt5.history_deals_get(today, datetime.utcnow())
         if history is None:
             return []
-        trades = []
-        for d in history:
+        return self._normalize_deals(history)
+
+    def get_deals_between(self, from_dt: datetime, to_dt: datetime) -> list:
+        self.ensure_connected()
+        history = mt5.history_deals_get(from_dt, to_dt)
+        if history is None:
+            return []
+        return self._normalize_deals(history)
+
+    def _normalize_deals(self, deals) -> list:
+        out = []
+        for d in deals:
             deal_type = "BUY" if d.type == mt5.DEAL_TYPE_BUY else "SELL"
             position_id = getattr(d, "position_id", None) or getattr(d, "position", None)
             deal_entry = getattr(d, "entry", None)
-            trades.append(
-                {
-                    "deal_ticket": d.ticket,
-                    "ticket": d.ticket,
-                    "order_ticket": getattr(d, "order", None),
-                    "position_id": position_id,
-                    "symbol": d.symbol,
-                    "type": deal_type,
-                    "entry": deal_entry,
-                    "magic": getattr(d, "magic", None),
-                    "volume": d.volume,
-                    "price": d.price,
-                    "profit": d.profit,
-                    "time": datetime.utcfromtimestamp(d.time).isoformat(),
-                }
-            )
-        return trades
+            out.append({
+                "deal_ticket": d.ticket,
+                "ticket": d.ticket,
+                "order_ticket": getattr(d, "order", None),
+                "position_id": position_id,
+                "symbol": d.symbol,
+                "entry": deal_entry,
+                "type": deal_type,
+                "profit": d.profit,
+                "price": d.price,
+                "volume": d.volume,
+                "time": datetime.utcfromtimestamp(d.time).isoformat(),
+                "magic": getattr(d, "magic", None),
+            })
+        return out

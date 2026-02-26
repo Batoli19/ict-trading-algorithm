@@ -157,6 +157,16 @@ class DashboardAPI:
             "events_status": "not_configured",
             "upcoming_news": [],
             "analyzer": {"running": False, "last_tick": None},
+            "execution_profile": "normal",
+            "prop_mode_enabled": False,
+            "prop_guardrails": {},
+            "sniper_settings": {
+                "min_rr": 0.0,
+                "min_confidence": 0.0,
+                "max_sl_pips": {},
+                "max_sl_usd": 0.0,
+            },
+            "last_skip_reasons": [],
         }
 
     def _safe_status_payload(self):

@@ -21,10 +21,22 @@ SPREAD COMPENSATION:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Optional, List
 from datetime import datetime
 
 logger = logging.getLogger("TRAIL")
+
+
+@dataclass
+class TpMissProtectionCfg:
+    enabled: bool = True
+    near_tp_pips: float = 2.0
+    lock_pct: float = 0.90
+    min_lock_pips: float = 1.0
+    spread_guard: bool = True
+    max_spread_pips: float = 3.0
+    once_per_position: bool = False
 
 
 class ICT2022TrailingStop:
@@ -39,6 +51,19 @@ class ICT2022TrailingStop:
         
         # Track partial closures
         self._partials_taken = {}  # {ticket: {"50%": bool, "75%": bool}}
+        self._tp_protection_state = {}  # {ticket: {"tp_protect_applied": bool}}
+
+        tp_cfg = self.cfg.get("tp_miss_protection", {})
+        fallback_near_pips = float(self.cfg.get("tp_miss_protection_pips", 2.0) or 2.0)
+        self.tp_miss_cfg = TpMissProtectionCfg(
+            enabled=bool(tp_cfg.get("enabled", True)),
+            near_tp_pips=float(tp_cfg.get("near_tp_pips", fallback_near_pips) or fallback_near_pips),
+            lock_pct=float(tp_cfg.get("lock_pct", 0.90) or 0.90),
+            min_lock_pips=float(tp_cfg.get("min_lock_pips", 1.0) or 1.0),
+            spread_guard=bool(tp_cfg.get("spread_guard", True)),
+            max_spread_pips=float(tp_cfg.get("max_spread_pips", 3.0) or 3.0),
+            once_per_position=bool(tp_cfg.get("once_per_position", False)),
+        )
         
     def get_pip_size(self, symbol: str) -> float:
         if "JPY" in symbol:
@@ -48,6 +73,88 @@ class ICT2022TrailingStop:
         if "XAU" in symbol:
             return 0.1
         return 0.0001
+
+    def _pip_size_from_symbol_info(self, symbol: str) -> float:
+        info = None
+        if hasattr(self.mt5, "get_symbol_info"):
+            info = self.mt5.get_symbol_info(symbol)
+        if info:
+            point = float(info.get("point", 0.0) or 0.0)
+            digits = int(info.get("digits", 0) or 0)
+            if point > 0:
+                return point * 10 if digits in (3, 5) else point
+        return self.get_pip_size(symbol)
+
+    def _pips_to_price(self, symbol: str, pips: float) -> float:
+        return pips * self._pip_size_from_symbol_info(symbol)
+
+    def apply_tp_miss_protection(self, position: dict, bid: float, ask: float) -> Optional[float]:
+        cfg = self.tp_miss_cfg
+        if not cfg.enabled:
+            return None
+
+        tp = float(position.get("tp", 0.0) or 0.0)
+        if tp <= 0:
+            return None
+
+        symbol = position["symbol"]
+        ticket = int(position["ticket"])
+        pos_type = str(position["type"]).upper()
+        entry = float(position["open_price"])
+        current_sl_raw = position.get("sl")
+        current_sl = float(current_sl_raw) if current_sl_raw else 0.0
+
+        pip_price = self._pips_to_price(symbol, 1.0)
+        if pip_price <= 0:
+            return None
+
+        spread_pips = (ask - bid) / pip_price
+        if cfg.spread_guard and cfg.max_spread_pips > 0 and spread_pips > cfg.max_spread_pips:
+            return None
+
+        if pos_type == "BUY":
+            remaining = tp - bid
+            total = tp - entry
+            if total <= 0:
+                return None
+            if remaining > self._pips_to_price(symbol, cfg.near_tp_pips):
+                return None
+
+            desired_sl = entry + (total * cfg.lock_pct)
+            min_improve = self._pips_to_price(symbol, cfg.min_lock_pips)
+            if desired_sl <= current_sl + min_improve:
+                return None
+
+            buffer = self._pips_to_price(symbol, 0.2)
+            desired_sl = min(desired_sl, bid - buffer)
+            if desired_sl <= current_sl + min_improve:
+                return None
+        elif pos_type == "SELL":
+            remaining = ask - tp
+            total = entry - tp
+            if total <= 0:
+                return None
+            if remaining > self._pips_to_price(symbol, cfg.near_tp_pips):
+                return None
+
+            desired_sl = entry - (total * cfg.lock_pct)
+            current_sl = float(current_sl_raw) if current_sl_raw else 10**9
+            min_improve = self._pips_to_price(symbol, cfg.min_lock_pips)
+            if desired_sl >= current_sl - min_improve:
+                return None
+
+            buffer = self._pips_to_price(symbol, 0.2)
+            desired_sl = max(desired_sl, ask + buffer)
+            if desired_sl >= current_sl - min_improve:
+                return None
+        else:
+            return None
+
+        state = self._tp_protection_state.setdefault(ticket, {})
+        if cfg.once_per_position and state.get("tp_protect_applied"):
+            return None
+        state["tp_protect_applied"] = True
+        return desired_sl
     
     def find_intermediate_high(self, candles: List[dict]) -> Optional[float]:
         """
@@ -124,7 +231,8 @@ class ICT2022TrailingStop:
         self._partials_taken[ticket][reason] = True
     
     def get_trailing_sl(self, position: dict, current_price: float,
-                        candles_m5: List[dict], spread_pips: float = 0) -> Optional[float]:
+                        candles_m5: List[dict], spread_pips: float = 0,
+                        bid: Optional[float] = None, ask: Optional[float] = None) -> Optional[float]:
         """
         ICT 2022 trailing logic:
           1. Take partials at 50% and 75% to TP
@@ -142,8 +250,17 @@ class ICT2022TrailingStop:
         current_sl = position["sl"]
         tp = position["tp"]
         volume = position["volume"]
-        
+
         pip_size = self.get_pip_size(symbol)
+
+        spread_price = pip_size * spread_pips
+        bid_price = float(bid) if bid is not None else float(current_price - (spread_price / 2.0))
+        ask_price = float(ask) if ask is not None else float(current_price + (spread_price / 2.0))
+
+        tp_protect_sl = self.apply_tp_miss_protection(position, bid_price, ask_price)
+        if tp_protect_sl is not None:
+            logger.info(f"TP_MISS_PROTECT | {symbol} #{ticket} | {current_sl:.5f} -> {tp_protect_sl:.5f}")
+            return round(tp_protect_sl, 5)
         
         # Calculate progress to TP
         progress = self.calculate_progress_to_tp(entry, current_price, tp)
@@ -203,3 +320,5 @@ class ICT2022TrailingStop:
         """Clean up when position closes"""
         if ticket in self._partials_taken:
             del self._partials_taken[ticket]
+        if ticket in self._tp_protection_state:
+            del self._tp_protection_state[ticket]

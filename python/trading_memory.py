@@ -13,7 +13,7 @@ This is the bot's long-term memory.
 
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict
 from dataclasses import dataclass
@@ -190,6 +190,39 @@ class TradingMemoryDB:
         
         self.conn.commit()
         logger.info(f"📝  Recorded entry: {trade.setup_type} {trade.symbol} #{trade.ticket}")
+
+    def get_open_trades(self, limit: Optional[int] = None) -> List[Dict]:
+        """Return currently open DB trades."""
+        cursor = self.conn.cursor()
+        q = """
+        SELECT id, ticket, symbol, direction, setup_type, entry_price, sl_price, tp_price,
+               position_id, order_ticket, deal_ticket, entry_time
+        FROM trades
+        WHERE outcome IS NULL OR outcome = '' OR outcome = 'OPEN'
+        ORDER BY id DESC
+        """
+        params = ()
+        if limit is not None:
+            q += " LIMIT ?"
+            params = (int(limit),)
+        cursor.execute(q, params)
+        rows = []
+        for row in cursor.fetchall():
+            rows.append({
+                "id": row[0],
+                "ticket": row[1],
+                "symbol": row[2],
+                "direction": row[3],
+                "setup_type": row[4],
+                "entry_price": row[5],
+                "sl_price": row[6],
+                "tp_price": row[7],
+                "position_id": row[8],
+                "order_ticket": row[9],
+                "deal_ticket": row[10],
+                "entry_time": str(row[11]) if row[11] is not None else None,
+            })
+        return rows
     
     # ── Record Trade Exit ─────────────────────────────────────────────────────
     def record_exit(self,
@@ -237,7 +270,7 @@ class TradingMemoryDB:
             deal_ticket = COALESCE(?, deal_ticket),
             order_ticket = COALESCE(?, order_ticket),
             position_id = COALESCE(?, position_id)
-        WHERE id = ? AND outcome IS NULL
+        WHERE id = ? AND (outcome IS NULL OR outcome = '' OR outcome = 'OPEN')
         """, (
             exit_price, resolved_exit_time, pnl, outcome,
             stop_hit_reason, tp_hit_reason, lessons,
@@ -261,6 +294,31 @@ class TradingMemoryDB:
             f"| pos={position_id} order={order_ticket} deal={deal_ticket}"
         )
         return True
+
+    def update_exit_analysis(self,
+                             trade_id: Optional[int] = None,
+                             ticket: Optional[int] = None,
+                             stop_hit_reason: Optional[str] = None,
+                             tp_hit_reason: Optional[str] = None,
+                             lessons: Optional[str] = None) -> bool:
+        cursor = self.conn.cursor()
+        if trade_id is not None:
+            cursor.execute("""
+            UPDATE trades
+            SET stop_hit_reason = ?, tp_hit_reason = ?, lessons_learned = ?
+            WHERE id = ?
+            """, (stop_hit_reason, tp_hit_reason, lessons, int(trade_id)))
+        elif ticket is not None:
+            cursor.execute("""
+            UPDATE trades
+            SET stop_hit_reason = ?, tp_hit_reason = ?, lessons_learned = ?
+            WHERE ticket = ?
+            """, (stop_hit_reason, tp_hit_reason, lessons, int(ticket)))
+        else:
+            return False
+        updated = cursor.rowcount > 0
+        self.conn.commit()
+        return updated
     
     # ── Update Setup Performance ──────────────────────────────────────────────
     def _update_setup_performance(self, setup_type: str):
@@ -511,9 +569,9 @@ class TradingMemoryDB:
 
         lookup_chain = [
             ("position_id", position_id),
+            ("ticket", ticket),
             ("order_ticket", order_ticket),
             ("deal_ticket", deal_ticket),
-            ("ticket", ticket),
         ]
         for col, value in lookup_chain:
             if value is None:
@@ -523,7 +581,7 @@ class TradingMemoryDB:
                    entry_price, sl_price, tp_price,
                    position_id, order_ticket, deal_ticket
             FROM trades
-            WHERE outcome IS NULL AND {col} = ?
+            WHERE (outcome IS NULL OR outcome = '' OR outcome = 'OPEN') AND {col} = ?
             ORDER BY id DESC
             LIMIT 1
             """, (value,))
@@ -542,6 +600,32 @@ class TradingMemoryDB:
                     "order_ticket": row[9],
                     "deal_ticket": row[10],
                     "matched_by": col,
+                }
+        if position_id is not None:
+            cursor.execute("""
+            SELECT id, ticket, symbol, direction, setup_type,
+                   entry_price, sl_price, tp_price,
+                   position_id, order_ticket, deal_ticket
+            FROM trades
+            WHERE (outcome IS NULL OR outcome = '' OR outcome = 'OPEN') AND ticket = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """, (position_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "ticket": row[1],
+                    "symbol": row[2],
+                    "direction": row[3],
+                    "setup_type": row[4],
+                    "entry_price": row[5],
+                    "sl_price": row[6],
+                    "tp_price": row[7],
+                    "position_id": row[8],
+                    "order_ticket": row[9],
+                    "deal_ticket": row[10],
+                    "matched_by": "ticket_from_position_id",
                 }
         return None
 
@@ -588,6 +672,47 @@ class TradingMemoryDB:
                 "exit_price": float(row[10] or 0.0),
             })
         return rows
+
+    def count_trades_for_symbol_between(self, symbol: str, start_utc: datetime, end_utc: datetime) -> int:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM trades
+            WHERE symbol = ?
+              AND entry_time >= ?
+              AND entry_time < ?
+            """,
+            (symbol, start_utc.isoformat(), end_utc.isoformat())
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def _utc_day_window(self):
+        now = datetime.now(timezone.utc)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+        end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return start, end
+
+    def count_trades_today_total(self) -> int:
+        start, end = self._utc_day_window()
+        cur = self.conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM trades WHERE entry_time BETWEEN ? AND ?", (start, end))
+        return int(cur.fetchone()[0] or 0)
+
+    def count_trades_today_symbol(self, symbol: str) -> int:
+        start, end = self._utc_day_window()
+        cur = self.conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM trades WHERE symbol=? AND entry_time BETWEEN ? AND ?", (symbol, start, end))
+        return int(cur.fetchone()[0] or 0)
+
+    def count_trades_today_symbol_kz(self, symbol: str, kill_zone: str) -> int:
+        start, end = self._utc_day_window()
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM trades WHERE symbol=? AND kill_zone=? AND entry_time BETWEEN ? AND ?",
+            (symbol, kill_zone, start, end),
+        )
+        return int(cur.fetchone()[0] or 0)
 
     def get_daily_summary(self, start_utc: datetime, end_utc: datetime) -> Dict:
         trades = self.get_closed_trades_between(start_utc, end_utc)
