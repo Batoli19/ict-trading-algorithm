@@ -15,6 +15,7 @@ def load_config(path: Path) -> dict:
         config = json.load(f)
     _normalize_execution_gates(config)
     _normalize_trailing_structure(config)
+    _normalize_adaptive_learning(config)
     _validate(config)
     return config
 
@@ -164,6 +165,28 @@ def _normalize_trailing_structure(config: dict):
 
     if "require_structure_for_be" in ts:
         logger.warning("CONFIG_LEGACY_KEY_IGNORED: trailing_structure.require_structure_for_be is deprecated")
+
+
+def _normalize_adaptive_learning(config: dict):
+    al = config.get("adaptive_learning", {})
+    if not isinstance(al, dict):
+        al = {}
+        config["adaptive_learning"] = al
+
+    defaults = {
+        "enabled": True,
+        "phase": 1,
+        "entry_blocking_enabled": False,
+        "candidate_ttl_hours": 72,
+        "min_losses_before_rule": 5,
+        "min_rule_sample_size": 10,
+        "min_rule_precision": 0.65,
+        "max_active_rules_per_setup": 5,
+        "cooldown_seconds_after_new_rule": 1800,
+        "shadow_mode": False,
+    }
+    for key, value in defaults.items():
+        al.setdefault(key, value)
 
 def _validate(config: dict):
     """Basic sanity checks"""

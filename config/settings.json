@@ -205,6 +205,19 @@
     "thesis_groups": {}
   },
 
+  "adaptive_learning": {
+    "enabled": true,
+    "phase": 1,
+    "entry_blocking_enabled": false,
+    "candidate_ttl_hours": 72,
+    "min_losses_before_rule": 5,
+    "min_rule_sample_size": 10,
+    "min_rule_precision": 0.65,
+    "max_active_rules_per_setup": 5,
+    "cooldown_seconds_after_new_rule": 1800,
+    "shadow_mode": true
+  },
+
   "chop_filter": {
     "enabled": true,
     "atr_period": 14,

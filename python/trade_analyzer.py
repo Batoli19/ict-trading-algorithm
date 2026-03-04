@@ -335,6 +335,36 @@ class TradeAnalyzer:
             logger.error(f"Risk on_trade_closed failed: {e}", exc_info=True)
 
         analysis = None
+        if float(pnl) < 0 and hasattr(self.engine, "loss_analyzer"):
+            candles_h4 = self.mt5.get_candles(symbol, "H4", 120)
+            candles_m15 = self.mt5.get_candles(symbol, "M15", 160)
+            loss_trade_record = {
+                "ticket": int(ticket),
+                "symbol": symbol,
+                "direction": str(db_record.get("direction", "")),
+                "setup_type": str(db_record.get("setup_type", "")),
+                "reason": str(db_record.get("reason", "")),
+                "confidence": float(db_record.get("confidence_input", 0.0) or 0.0),
+                "htf_bias": str(db_record.get("htf_bias", "UNKNOWN") or "UNKNOWN"),
+                "kill_zone": str(db_record.get("kill_zone", "UNKNOWN") or "UNKNOWN"),
+                "spread_pips": float(db_record.get("spread_pips", 0.0) or 0.0),
+            }
+            try:
+                await self.engine.loss_analyzer.analyze_loss(
+                    loss_trade_record,
+                    candles_h4 or [],
+                    candles_m15 or [],
+                    candles_m5 or [],
+                )
+            except Exception as e:
+                logger.error(
+                    "ADAPTIVE_LEARNING_ERROR action=analyze_loss ticket=%s symbol=%s err=%s",
+                    ticket,
+                    symbol,
+                    e,
+                    exc_info=True,
+                )
+
         try:
             analysis = self.brain.analyze_exit(trade_record, candles_m5)
         except Exception as e:

@@ -22,6 +22,7 @@ from cooldown_manager import CooldownManager
 from hybrid_gate import HybridGate
 from sniper_filter import SniperFilter
 from trailing_manager import StructureTrailingManager
+from loss_analyzer import LossAnalyzer
 
 logger = logging.getLogger("ENGINE")
 
@@ -49,6 +50,7 @@ class TradingEngine:
         self.hybrid_gate = HybridGate(self.cfg, self.memory)
         self.sniper_filter = SniperFilter(self.cfg)
         self.trailing = StructureTrailingManager(self.cfg)
+        self.loss_analyzer = LossAnalyzer(self.mt5, self.strategy, self.memory, self.cfg)
         self._sl_update_attempts: dict[int, int] = {}
 
         self._scan_interval = 10
@@ -67,6 +69,7 @@ class TradingEngine:
         self.started_at_utc = datetime.utcnow()
         self._pending_cancel_reasons: deque[dict] = deque(maxlen=20)
         self._daily_loss_flatten_last_at: Optional[datetime] = None
+        self._adaptive_last_validate_at: Optional[datetime] = None
 
     async def _startup(self) -> bool:
         logger.info("Connecting to MT5...")
@@ -118,6 +121,7 @@ class TradingEngine:
             try:
                 await self.manage_open_positions()
                 await self._fallback_closed_trade_sync()
+                self._maybe_validate_adaptive_rules()
             except Exception as e:
                 logger.error(f"Manage error: {e}", exc_info=True)
             await asyncio.sleep(self._manage_interval)
@@ -126,6 +130,24 @@ class TradingEngine:
         while not self.shutdown.is_set():
             await asyncio.sleep(self._news_interval)
             await self.news.update()
+
+    def _maybe_validate_adaptive_rules(self):
+        al_cfg = self.cfg.get("adaptive_learning", {})
+        if not isinstance(al_cfg, dict) or not bool(al_cfg.get("enabled", False)):
+            return
+
+        now = datetime.utcnow()
+        interval = int(al_cfg.get("validation_interval_seconds", 3600) or 3600)
+        if self._adaptive_last_validate_at is not None:
+            elapsed = (now - self._adaptive_last_validate_at).total_seconds()
+            if elapsed < max(60, interval):
+                return
+
+        try:
+            self.loss_analyzer.validate_rules_job()
+            self._adaptive_last_validate_at = now
+        except Exception as e:
+            logger.error("ADAPTIVE_LEARNING_ERROR action=validate_rules err=%s", e, exc_info=True)
 
     async def _scan_all_pairs(self):
         account = self.mt5.get_account_info()
@@ -673,6 +695,41 @@ class TradingEngine:
             logger.warning(f"Lot size too small ({lot}) - skip")
             return
 
+        adaptive_block, adaptive_reason = self.loss_analyzer.should_block_entry(
+            symbol=signal.symbol,
+            setup_type=signal.setup_type.value,
+            direction=signal.direction.value,
+            candles_h4=candles_h4,
+            candles_m15=candles_m15,
+            candles_m5=candles_m5,
+            setup_id=setup_id,
+        )
+        if adaptive_block:
+            logger.warning(
+                "SKIP_ENTRY_ADAPTIVE: symbol=%s setup=%s direction=%s reason=%s",
+                signal.symbol,
+                signal.setup_type.value,
+                signal.direction.value,
+                adaptive_reason,
+            )
+            self._skip_reasons.append(
+                {
+                    "ts": datetime.utcnow().isoformat(),
+                    "symbol": signal.symbol,
+                    "setup_type": signal.setup_type.value,
+                    "reason": "ADAPTIVE_BLOCK",
+                    "detail": adaptive_reason,
+                }
+            )
+            return
+        if str(adaptive_reason).startswith("WOULD_BLOCK"):
+            logger.info(
+                "ADAPTIVE_SHADOW: symbol=%s setup=%s detail=%s",
+                signal.symbol,
+                signal.setup_type.value,
+                adaptive_reason,
+            )
+
         result = None
         if planned_mode == "LIMIT" and hasattr(self.mt5, "place_limit_order"):
             result = self.mt5.place_limit_order(
@@ -1064,6 +1121,12 @@ class TradingEngine:
         ]
 
         setup_perf = self.memory.get_all_setup_performance()
+        adaptive_stats = self.memory.get_adaptive_learning_stats() if hasattr(self.memory, "get_adaptive_learning_stats") else {}
+        if hasattr(self, "loss_analyzer"):
+            try:
+                adaptive_stats = {**adaptive_stats, **self.loss_analyzer.get_learning_stats()}
+            except Exception:
+                pass
         exec_cfg = self.cfg.get("execution", {}) if isinstance(self.cfg.get("execution", {}), dict) else {}
         forced = exec_cfg.get("force_enable_setups", [])
         if isinstance(forced, list) and forced:
@@ -1139,6 +1202,7 @@ class TradingEngine:
                 if isinstance(self.analyzer_last_tick, datetime)
                 else None,
             },
+            "adaptive_learning": adaptive_stats,
         }
 
     def _is_hybrid_mode(self) -> bool:

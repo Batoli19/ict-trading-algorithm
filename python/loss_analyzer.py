@@ -1,97 +1,63 @@
-"""
-Loss Analyzer & Adaptive Learning System
-─────────────────────────────────────────
-TRUE adaptive learning - the bot analyzes WHY it lost and creates new rules.
 
-Example:
-  Trade: BUY because "FVG detected"
-  Result: LOSS (-50 pips)
-  
-  Bot analyzes:
-    - Re-scans price action that happened
-    - Finds: "There was a BIGGER bearish FVG below that I missed"
-    - Lesson: "Always check for opposing FVGs before entry"
-    - Creates Rule: "If opposing FVG is larger, BLOCK the trade"
-  
-  Next time:
-    - Signal: BUY (FVG setup)
-    - Bot checks: Opposing FVG found below (larger)
-    - Decision: BLOCK TRADE (rule #1)
-    - Result: Avoided another -50 pip loss
+"""
+Deterministic adaptive learning for post-loss analysis.
+
+Phase 1 (observe): analyze losses, persist lessons and candidate rules, no entry blocking.
+Phase 2 (controlled): optional rule-based entry blocking behind strict config gates.
 """
 
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
-from collections import Counter
+from __future__ import annotations
+
 import json
+import logging
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("LOSS_ANALYZER")
 
 
 @dataclass
 class LossLesson:
-    """What the bot learned from a losing trade"""
     trade_id: int
     symbol: str
-    expected_direction: str  # What we thought
-    actual_direction: str     # What happened
-    
-    # What we saw (why we entered)
+    expected_direction: str
+    actual_direction: str
     entry_reasons: List[str]
     entry_setups_detected: List[str]
     entry_confidence: float
-    
-    # What we MISSED (why we lost)
     missed_opposing_signals: List[str]
     strongest_opposing_setup: Optional[str]
     opposing_confluence_count: int
-    
-    # The lesson
     lesson_summary: str
-    new_rule_created: Optional[str]
-    setup_to_avoid: Optional[str]
-    
-    # Context
+    created_at_utc: datetime
     htf_bias: str
     kill_zone: str
     spread_pips: float
-    timestamp: datetime
-    
-    # Metadata
-    effectiveness_score: float = 0.0  # How useful was this lesson?
-    times_prevented_loss: int = 0
 
 
 @dataclass
 class AdaptiveRule:
-    """A trading rule created from lessons learned"""
-    rule_id: int
-    created_at: datetime
-    lesson_trade_id: int
-    
-    rule_type: str  # AVOIDANCE, REQUIREMENT, FILTER
-    affected_setup: str  # Which setup does this apply to
-    
-    # What to check
-    check_for: str  # What pattern to look for
-    check_direction: str  # BUY or SELL
-    threshold: float  # Minimum strength needed
-    
-    # Description
+    id: int
+    created_at_utc: datetime
+    rule_type: str
+    affected_setup: str
+    check_for: str
+    check_direction: str
+    threshold: float
     description: str
     example: str
-    
-    # Performance
-    active: bool = True
-    times_triggered: int = 0
-    trades_blocked: int = 0
-    estimated_losses_prevented: float = 0.0
-    
-    # Auto-disable if proven ineffective
-    false_positives: int = 0
-    last_triggered: Optional[datetime] = None
+    active: bool
+    sample_size: int
+    wins_blocked_est: float
+    losses_prevented_est: float
+    times_triggered: int
+    trades_blocked: int
+    false_positives: int
+    last_triggered_utc: Optional[datetime]
+    expires_at_utc: Optional[datetime]
+    status: str
 
 
 class LossAnalyzer:
@@ -99,473 +65,744 @@ class LossAnalyzer:
         self.mt5 = mt5_connector
         self.strategy = strategy
         self.memory = memory_db
-        self.cfg = config
-        
-        # Track learned patterns
+        self.cfg = config if isinstance(config, dict) else {}
+
+        self.al_cfg = self._build_adaptive_cfg(self.cfg)
+
         self.learned_lessons: List[LossLesson] = []
         self.adaptive_rules: List[AdaptiveRule] = []
         self.pattern_counter: Counter = Counter()
-        self.setup_blacklist: Dict[str, datetime] = {}
-        
-        # Performance tracking
+
         self.total_losses_analyzed: int = 0
         self.rules_created: int = 0
         self.trades_blocked: int = 0
-        
-        logger.info("🧠 Adaptive Learning System initialized")
-    
-    async def analyze_loss(self, trade_record, candles_h4, candles_m15, candles_m5) -> LossLesson:
-        """
-        Deep analysis of WHY a trade lost.
-        Called automatically when a trade closes at SL.
-        
-        Process:
-        1. Fetch price data that happened after entry
-        2. Re-scan for patterns in OPPOSITE direction
-        3. Compare what we saw vs what we missed
-        4. Create lesson and adaptive rule
-        5. Store in memory for future use
-        """
-        logger.info(f"\n{'='*80}")
-        logger.info(f"🔍 ANALYZING LOSS #{trade_record.ticket}: {trade_record.symbol} {trade_record.direction}")
-        logger.info(f"{'='*80}")
-        
-        symbol = trade_record.symbol
-        direction = trade_record.direction
-        entry_time = trade_record.open_time
-        
-        self.total_losses_analyzed += 1
-        
-        # Step 1: Re-scan for patterns in OPPOSITE direction
-        opposite_dir = "SELL" if direction == "BUY" else "BUY"
-        
-        logger.info(f"📊 Re-scanning market for {opposite_dir} signals we missed...")
-        
-        missed_signals = self._find_opposing_signals(
-            symbol, candles_h4, candles_m15, candles_m5, opposite_dir
+
+        self.load_rules_from_db()
+
+        logger.info(
+            "ADAPTIVE_LEARNING_INIT enabled=%s phase=%s entry_blocking=%s shadow_mode=%s",
+            int(self.al_cfg["enabled"]),
+            int(self.al_cfg["phase"]),
+            int(self.al_cfg["entry_blocking_enabled"]),
+            int(self.al_cfg["shadow_mode"]),
         )
-        
-        # Step 2: Analyze what we saw vs what we missed
-        entry_reasons = self._extract_entry_reasons(trade_record)
-        entry_setups = self._extract_entry_setups(trade_record)
-        
-        missed_list = []
-        strongest_opposing = None
-        opposing_count = 0
-        
-        # Check each type of opposing signal
-        if missed_signals['fvg']:
-            missed_list.append(f"Opposing FVG (x{len(missed_signals['fvg'])})")
-            opposing_count += len(missed_signals['fvg'])
-            if not strongest_opposing:
-                strongest_opposing = "FVG"
-        
-        if missed_signals['stop_hunt']:
-            missed_list.append("Stop Hunt in opposite direction")
-            opposing_count += 1
-            if not strongest_opposing or opposing_count == 1:
-                strongest_opposing = "STOP_HUNT"
-        
-        if missed_signals['order_block']:
-            missed_list.append("Order Block opposite direction")
-            opposing_count += 1
-            if not strongest_opposing:
-                strongest_opposing = "ORDER_BLOCK"
-        
-        if missed_signals['displacement']:
-            missed_list.append("Strong displacement opposite direction")
-            opposing_count += 1
-            strongest_opposing = "DISPLACEMENT"  # This is usually strongest
-        
-        if missed_signals['structure_break']:
-            missed_list.append("HTF structure break opposite direction")
-            opposing_count += 1
-            strongest_opposing = "STRUCTURE_BREAK"
-        
-        if missed_signals['liquidity_sweep']:
-            missed_list.append("Liquidity sweep opposite direction")
-            opposing_count += 1
-        
-        # Step 3: Generate lesson
-        lesson_text = self._create_lesson_text(
-            direction, entry_reasons, missed_list, strongest_opposing
-        )
-        
-        new_rule_description = None
-        setup_to_avoid = None
-        
-        # If we missed >= 2 opposing signals, create a new rule
-        if opposing_count >= 2:
-            new_rule_description = self._create_new_rule_description(
-                entry_setups[0] if entry_setups else "UNKNOWN",
-                strongest_opposing,
-                opposing_count
-            )
-            
-            # Create the actual rule
-            self._create_adaptive_rule(
-                entry_setups[0] if entry_setups else "UNKNOWN",
-                strongest_opposing,
-                opposing_count,
-                new_rule_description,
-                trade_record.ticket
-            )
-            
-            self.rules_created += 1
-        
-        # If we keep losing on same setup, blacklist it temporarily
-        if opposing_count >= 3:
-            setup_to_avoid = entry_setups[0] if entry_setups else None
-            if setup_to_avoid:
-                self.setup_blacklist[setup_to_avoid] = datetime.utcnow() + timedelta(hours=24)
-                logger.warning(f"⛔ Temporarily BLACKLISTED setup '{setup_to_avoid}' for 24 hours")
-        
-        # Step 4: Create lesson object
-        lesson = LossLesson(
-            trade_id=trade_record.ticket,
-            symbol=symbol,
-            expected_direction=direction,
-            actual_direction=opposite_dir,
-            entry_reasons=entry_reasons,
-            entry_setups_detected=entry_setups,
-            entry_confidence=0.75,  # Default, extract from trade_record if available
-            missed_opposing_signals=missed_list,
-            strongest_opposing_setup=strongest_opposing,
-            opposing_confluence_count=opposing_count,
-            lesson_summary=lesson_text,
-            new_rule_created=new_rule_description,
-            setup_to_avoid=setup_to_avoid,
-            htf_bias=getattr(trade_record, 'htf_bias', 'UNKNOWN'),
-            kill_zone=getattr(trade_record, 'kill_zone', 'UNKNOWN'),
-            spread_pips=0.0,
-            timestamp=datetime.utcnow()
-        )
-        
-        # Step 5: Store lesson
-        self.learned_lessons.append(lesson)
-        self._save_lesson_to_memory(lesson)
-        
-        # Step 6: Log the lesson
-        logger.info(f"\n📝 LESSON LEARNED:")
-        logger.info(f"   {lesson.lesson_summary}")
-        if lesson.new_rule_created:
-            logger.info(f"   ✅ NEW RULE CREATED: {lesson.new_rule_created}")
-        if lesson.setup_to_avoid:
-            logger.info(f"   ⛔ SETUP BLACKLISTED: {lesson.setup_to_avoid} (24h)")
-        logger.info(f"{'='*80}\n")
-        
-        return lesson
-    
-    def _find_opposing_signals(self, symbol, candles_h4, candles_m15, candles_m5, opposite_direction) -> Dict:
-        """
-        Re-run ALL strategy detection in the OPPOSITE direction.
-        Find what we MISSED that would have told us NOT to enter.
-        """
-        opposing_signals = {
-            'fvg': [],
-            'stop_hunt': None,
-            'turtle_soup': None,
-            'order_block': None,
-            'displacement': False,
-            'structure_break': False,
-            'liquidity_sweep': False,
+
+    def _build_adaptive_cfg(self, root_cfg: dict) -> dict:
+        raw = root_cfg.get("adaptive_learning", {})
+        if not isinstance(raw, dict):
+            raw = {}
+        out = {
+            "enabled": bool(raw.get("enabled", True)),
+            "phase": int(raw.get("phase", 1) or 1),
+            "entry_blocking_enabled": bool(raw.get("entry_blocking_enabled", False)),
+            "candidate_ttl_hours": int(raw.get("candidate_ttl_hours", 72) or 72),
+            "min_losses_before_rule": int(raw.get("min_losses_before_rule", 5) or 5),
+            "min_rule_sample_size": int(raw.get("min_rule_sample_size", 10) or 10),
+            "min_rule_precision": float(raw.get("min_rule_precision", 0.65) or 0.65),
+            "max_active_rules_per_setup": int(raw.get("max_active_rules_per_setup", 5) or 5),
+            "cooldown_seconds_after_new_rule": int(raw.get("cooldown_seconds_after_new_rule", 1800) or 1800),
+            "shadow_mode": bool(raw.get("shadow_mode", root_cfg.get("shadow_mode", False))),
         }
-        
-        # Check for opposing FVGs
+        return out
+
+    def _utcnow(self) -> datetime:
+        return datetime.utcnow()
+
+    def _get_value(self, obj, key: str, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _to_direction(self, value: str) -> str:
+        s = str(value or "").upper().strip()
+        if s.startswith("BUY"):
+            return "BUY"
+        if s.startswith("SELL"):
+            return "SELL"
+        return s or "UNKNOWN"
+
+    def _signal_dir_text(self, raw) -> str:
+        v = raw
+        if hasattr(raw, "value"):
+            v = getattr(raw, "value")
+        return self._to_direction(str(v or ""))
+
+    def _parse_time(self, value) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
         try:
-            fvgs = self.strategy.find_fvg(candles_m15)
-            for fvg in fvgs:
-                if hasattr(fvg, 'direction') and fvg.direction.value == opposite_direction:
-                    opposing_signals['fvg'].append(fvg)
-        except Exception as e:
-            logger.debug(f"FVG check failed: {e}")
-        
-        # Check for opposing stop hunt
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    def _is_enabled(self) -> bool:
+        return bool(self.al_cfg.get("enabled", False))
+
+    def _is_phase2_blocking(self) -> bool:
+        return (
+            self._is_enabled()
+            and int(self.al_cfg.get("phase", 1)) == 2
+            and bool(self.al_cfg.get("entry_blocking_enabled", False))
+        )
+
+    def _extract_entry_reasons(self, trade_record) -> List[str]:
+        reason_text = str(self._get_value(trade_record, "reason", "") or "")
+        reasons: List[str] = []
+        if reason_text:
+            upper = reason_text.upper()
+            if "FVG" in upper:
+                reasons.append("FVG")
+            if "ORDER_BLOCK" in upper or "OB" in upper:
+                reasons.append("ORDER_BLOCK")
+            if "STOP HUNT" in upper or "STOP_HUNT" in upper:
+                reasons.append("STOP_HUNT")
+            if "LIQUIDITY" in upper:
+                reasons.append("LIQUIDITY_SWEEP")
+            if "DISPLACEMENT" in upper:
+                reasons.append("DISPLACEMENT")
+            if "HTF" in upper and "BIAS" in upper:
+                reasons.append("HTF_BIAS")
+        if not reasons:
+            reasons.append("UNKNOWN_REASON")
+        return reasons
+
+    def _extract_entry_setups(self, trade_record) -> List[str]:
+        raw = self._get_value(trade_record, "setup_type", "")
+        if not raw:
+            return ["UNKNOWN"]
+        setup = str(raw).strip().upper()
+        return [setup] if setup else ["UNKNOWN"]
+
+    def _find_opposing_signals(
+        self,
+        symbol: str,
+        candles_h4: List[dict],
+        candles_m15: List[dict],
+        candles_m5: List[dict],
+        opposite_direction: str,
+    ) -> Dict:
+        opposing = {
+            "fvg": [],
+            "stop_hunt": None,
+            "order_block": None,
+            "displacement": False,
+            "structure_break": False,
+            "liquidity_sweep": False,
+        }
+
         try:
-            if opposite_direction == "SELL":
-                sh_signal = self.strategy.stop_hunt_signal(candles_m15, symbol, "BEARISH")
-            else:
-                sh_signal = self.strategy.stop_hunt_signal(candles_m15, symbol, "BULLISH")
-            if sh_signal:
-                opposing_signals['stop_hunt'] = sh_signal
-        except Exception as e:
-            logger.debug(f"Stop hunt check failed: {e}")
-        
-        # Check for opposing order block
+            fvgs = self.strategy.find_fvg(candles_m15 or [])
+            for fvg in fvgs or []:
+                fvg_dir = self._signal_dir_text(getattr(fvg, "direction", ""))
+                if fvg_dir == opposite_direction:
+                    opposing["fvg"].append(fvg)
+        except Exception:
+            pass
+
         try:
-            obs = self.strategy.find_order_blocks(candles_m15, opposite_direction)
+            stop_hunt_bias = "BEARISH" if opposite_direction == "SELL" else "BULLISH"
+            sh = self.strategy.stop_hunt_signal(candles_m15 or [], symbol, stop_hunt_bias)
+            if sh:
+                opposing["stop_hunt"] = sh
+        except Exception:
+            pass
+
+        try:
+            obs = self.strategy.find_order_blocks(candles_m15 or [], opposite_direction)
             if obs:
-                opposing_signals['order_block'] = obs[0]
-        except Exception as e:
-            logger.debug(f"Order block check failed: {e}")
-        
-        # Check for displacement
-        opposing_signals['displacement'] = self._check_displacement(candles_m5, opposite_direction)
-        
-        # Check for structure break
-        opposing_signals['structure_break'] = self._check_structure_break(candles_h4, opposite_direction)
-        
-        # Check for liquidity sweep
-        opposing_signals['liquidity_sweep'] = self._check_liquidity_sweep(candles_m15, opposite_direction)
-        
-        return opposing_signals
-    
-    def _check_displacement(self, candles_m5, direction) -> bool:
-        """Check if there was strong displacement in opposite direction"""
+                opposing["order_block"] = obs[0]
+        except Exception:
+            pass
+
+        opposing["displacement"] = self._check_displacement(candles_m5 or [], opposite_direction)
+        opposing["structure_break"] = self._check_structure_break(candles_h4 or [], opposite_direction)
+        opposing["liquidity_sweep"] = self._check_liquidity_sweep(candles_m15 or [], opposite_direction)
+
+        return opposing
+
+    def _check_displacement(self, candles_m5: List[dict], direction: str) -> bool:
         if len(candles_m5) < 10:
             return False
-        
         recent = candles_m5[-10:]
-        
         if direction == "SELL":
-            bearish_candles = sum(1 for c in recent if c['close'] < c['open'])
-            if bearish_candles >= 7:
-                return True
-        else:
-            bullish_candles = sum(1 for c in recent if c['close'] > c['open'])
-            if bullish_candles >= 7:
-                return True
-        
-        return False
-    
-    def _check_structure_break(self, candles_h4, direction) -> bool:
-        """Check if H4 structure broke in opposite direction"""
+            bearish = sum(1 for c in recent if float(c.get("close", 0.0)) < float(c.get("open", 0.0)))
+            return bearish >= 7
+        bullish = sum(1 for c in recent if float(c.get("close", 0.0)) > float(c.get("open", 0.0)))
+        return bullish >= 7
+
+    def _check_structure_break(self, candles_h4: List[dict], direction: str) -> bool:
         if len(candles_h4) < 20:
             return False
-        
         recent = candles_h4[-20:]
-        
         if direction == "SELL":
-            swing_high = max(c['high'] for c in recent[:-5])
-            return any(c['close'] < swing_high * 0.995 for c in recent[-5:])
-        else:
-            swing_low = min(c['low'] for c in recent[:-5])
-            return any(c['close'] > swing_low * 1.005 for c in recent[-5:])
-    
-    def _check_liquidity_sweep(self, candles_m15, direction) -> bool:
-        """Check for liquidity sweep opposite direction"""
+            swing_high = max(float(c.get("high", 0.0)) for c in recent[:-5])
+            return any(float(c.get("close", 0.0)) < swing_high * 0.995 for c in recent[-5:])
+        swing_low = min(float(c.get("low", 0.0)) for c in recent[:-5])
+        return any(float(c.get("close", 0.0)) > swing_low * 1.005 for c in recent[-5:])
+
+    def _check_liquidity_sweep(self, candles_m15: List[dict], direction: str) -> bool:
         if len(candles_m15) < 20:
             return False
-        
         recent = candles_m15[-20:]
-        
         if direction == "SELL":
-            # Check for sweep of highs then reversal down
-            highs = [c['high'] for c in recent[:-2]]
+            highs = [float(c.get("high", 0.0)) for c in recent[:-2]]
             if not highs:
                 return False
             recent_high = max(highs)
-            
-            # Did we sweep it with wick then close below?
-            for c in recent[-2:]:
-                if c['high'] > recent_high and c['close'] < recent_high * 0.998:
-                    return True
-        else:
-            # Check for sweep of lows then reversal up
-            lows = [c['low'] for c in recent[:-2]]
-            if not lows:
-                return False
-            recent_low = min(lows)
-            
-            for c in recent[-2:]:
-                if c['low'] < recent_low and c['close'] > recent_low * 1.002:
-                    return True
-        
-        return False
-    
-    def _extract_entry_reasons(self, trade_record) -> List[str]:
-        """Extract why we entered the trade"""
-        reasons = []
-        
-        if hasattr(trade_record, 'reason') and trade_record.reason:
-            # Parse the reason string
-            reason_text = trade_record.reason
-            if "FVG" in reason_text:
-                reasons.append("FVG detected")
-            if "bullish" in reason_text.lower():
-                reasons.append("Bullish HTF bias")
-            if "bearish" in reason_text.lower():
-                reasons.append("Bearish HTF bias")
-            if "stop hunt" in reason_text.lower():
-                reasons.append("Stop hunt setup")
-        
-        if hasattr(trade_record, 'setup_type') and trade_record.setup_type:
-            reasons.append(f"{trade_record.setup_type} setup")
-        
-        return reasons if reasons else ["Unknown reason"]
-    
-    def _extract_entry_setups(self, trade_record) -> List[str]:
-        """Extract which setups were detected"""
-        if hasattr(trade_record, 'setup_type') and trade_record.setup_type:
-            return [trade_record.setup_type]
-        return ["UNKNOWN"]
-    
-    def _create_lesson_text(self, direction, entry_reasons, missed, strongest) -> str:
-        """Create human-readable lesson"""
-        text = f"Entered {direction} because: {', '.join(entry_reasons)}. "
-        
-        if missed:
-            text += f"BUT MISSED {len(missed)} opposing signals: {', '.join(missed)}. "
-        else:
-            text += "No clear opposing signals detected. "
-        
-        if strongest:
-            text += f"Strongest opposing force was: {strongest}. "
-        
-        text += "💡 LESSON: Always scan for opposing confluence before entry. "
-        text += "If 2+ opposing signals exist, SKIP the trade."
-        
-        return text
-    
-    def _create_new_rule_description(self, setup_type, opposing_type, opposing_count) -> str:
-        """Create description for new adaptive rule"""
-        return (
-            f"Before entering {setup_type}, check for {opposing_type} in opposite direction. "
-            f"If {opposing_count}+ opposing signals exist, BLOCK the trade."
-        )
-    
-    def _create_adaptive_rule(self, setup_type, opposing_setup, threshold, description, trade_id):
-        """Create a new trading rule that will be checked before future entries"""
-        rule = AdaptiveRule(
-            rule_id=len(self.adaptive_rules) + 1,
-            created_at=datetime.utcnow(),
-            lesson_trade_id=trade_id,
-            rule_type="AVOIDANCE",
-            affected_setup=setup_type,
-            check_for=opposing_setup,
-            check_direction="OPPOSITE",
-            threshold=float(threshold),
-            description=description,
-            example=f"Example: If entering {setup_type} BUY, check for {opposing_setup} SELL signals",
-            active=True
-        )
-        
-        self.adaptive_rules.append(rule)
-        logger.info(f"✅ Created adaptive rule #{rule.rule_id}: {rule.description}")
-    
-    def should_block_entry(self, symbol, setup_type, direction, candles_h4, candles_m15, candles_m5) -> Tuple[bool, str]:
-        """
-        Check if any learned rules say we should AVOID this entry.
-        Called BEFORE placing any trade.
-        
-        Returns: (should_block, reason)
-        """
-        # Check setup blacklist
-        if setup_type in self.setup_blacklist:
-            blacklist_until = self.setup_blacklist[setup_type]
-            if datetime.utcnow() < blacklist_until:
-                return True, f"SETUP_BLACKLISTED (learned pattern - too many losses)"
-        
-        # Check each adaptive rule
-        for rule in self.adaptive_rules:
-            if not rule.active:
-                continue
-            
-            if rule.affected_setup != setup_type:
-                continue
-            
-            # This rule applies to this setup
-            logger.debug(f"🧠 Checking adaptive rule #{rule.rule_id}: {rule.description}")
-            
-            # Get opposite direction
-            opposite_dir = "SELL" if direction == "BUY" else "BUY"
-            
-            # Re-scan for opposing signals
-            opposing_signals = self._find_opposing_signals(
-                symbol, candles_h4, candles_m15, candles_m5, opposite_dir
+            return any(
+                float(c.get("high", 0.0)) > recent_high and float(c.get("close", 0.0)) < recent_high * 0.998
+                for c in recent[-2:]
             )
-            
-            # Count opposing confluence
-            opposing_count = 0
-            if opposing_signals['fvg']:
-                opposing_count += len(opposing_signals['fvg'])
-            if opposing_signals['stop_hunt']:
-                opposing_count += 1
-            if opposing_signals['order_block']:
-                opposing_count += 1
-            if opposing_signals['displacement']:
-                opposing_count += 2  # Displacement is strong
-            if opposing_signals['structure_break']:
-                opposing_count += 2  # Structure break is strong
-            if opposing_signals['liquidity_sweep']:
-                opposing_count += 1
-            
-            # If opposing confluence meets threshold, block
-            if opposing_count >= rule.threshold:
-                rule.times_triggered += 1
-                rule.trades_blocked += 1
-                rule.last_triggered = datetime.utcnow()
-                
-                self.trades_blocked += 1
-                
-                block_reason = (
-                    f"ADAPTIVE_RULE_#{rule.rule_id}: Found {opposing_count} opposing signals "
-                    f"(threshold: {rule.threshold}). Learned from trade #{rule.lesson_trade_id}."
-                )
-                
-                logger.warning(f"🚫 {block_reason}")
-                return True, block_reason
-        
-        return False, "OK"
-    
-    def _save_lesson_to_memory(self, lesson: LossLesson):
-        """Save lesson to SQLite database for persistence"""
+        lows = [float(c.get("low", 0.0)) for c in recent[:-2]]
+        if not lows:
+            return False
+        recent_low = min(lows)
+        return any(
+            float(c.get("low", 0.0)) < recent_low and float(c.get("close", 0.0)) > recent_low * 1.002
+            for c in recent[-2:]
+        )
+
+    def _summarize_opposing_signals(self, opposing: Dict) -> Tuple[List[str], Optional[str], int]:
+        labels: List[str] = []
+        strengths: Dict[str, int] = {}
+
+        fvg_count = len(opposing.get("fvg") or [])
+        if fvg_count > 0:
+            labels.append(f"FVG x{fvg_count}")
+            strengths["FVG"] = fvg_count
+
+        if opposing.get("stop_hunt"):
+            labels.append("STOP_HUNT")
+            strengths["STOP_HUNT"] = 1
+
+        if opposing.get("order_block"):
+            labels.append("ORDER_BLOCK")
+            strengths["ORDER_BLOCK"] = 1
+
+        if bool(opposing.get("displacement")):
+            labels.append("DISPLACEMENT")
+            strengths["DISPLACEMENT"] = 2
+
+        if bool(opposing.get("structure_break")):
+            labels.append("STRUCTURE_BREAK")
+            strengths["STRUCTURE_BREAK"] = 2
+
+        if bool(opposing.get("liquidity_sweep")):
+            labels.append("LIQUIDITY_SWEEP")
+            strengths["LIQUIDITY_SWEEP"] = 1
+
+        confluence_count = fvg_count
+        confluence_count += 1 if opposing.get("stop_hunt") else 0
+        confluence_count += 1 if opposing.get("order_block") else 0
+        confluence_count += 1 if opposing.get("displacement") else 0
+        confluence_count += 1 if opposing.get("structure_break") else 0
+        confluence_count += 1 if opposing.get("liquidity_sweep") else 0
+
+        strongest = None
+        if strengths:
+            strongest = sorted(strengths.items(), key=lambda item: (item[1], item[0]), reverse=True)[0][0]
+
+        return labels, strongest, confluence_count
+
+    def _lesson_text(
+        self,
+        direction: str,
+        entry_reasons: List[str],
+        missed: List[str],
+        strongest: Optional[str],
+    ) -> str:
+        missed_txt = ", ".join(missed) if missed else "none"
+        strongest_txt = strongest or "NONE"
+        return (
+            f"Entered {direction} because {', '.join(entry_reasons)}; "
+            f"missed opposing signals: {missed_txt}; strongest opposing setup: {strongest_txt}."
+        )
+
+    def _clamp(self, value: int, min_v: int, max_v: int) -> int:
+        return max(min_v, min(max_v, int(value)))
+
+    def _candidate_exists(self, setup: str, check_for: str, threshold: float) -> bool:
+        setup_u = str(setup or "").upper()
+        check_u = str(check_for or "").upper()
+        for rule in self.adaptive_rules:
+            if str(rule.affected_setup).upper() != setup_u:
+                continue
+            if str(rule.check_for).upper() != check_u:
+                continue
+            if int(float(rule.threshold)) != int(float(threshold)):
+                continue
+            if str(rule.status).upper() in ("CANDIDATE", "ACTIVE"):
+                return True
+        return False
+
+    async def analyze_loss(self, trade_record, candles_h4, candles_m15, candles_m5) -> LossLesson:
+        now = self._utcnow()
+        ticket = int(self._get_value(trade_record, "ticket", 0) or 0)
+        symbol = str(self._get_value(trade_record, "symbol", "") or "")
+        expected_direction = self._to_direction(self._get_value(trade_record, "direction", ""))
+        actual_direction = "SELL" if expected_direction == "BUY" else "BUY"
+
+        entry_reasons = self._extract_entry_reasons(trade_record)
+        entry_setups = self._extract_entry_setups(trade_record)
+
+        opposing = self._find_opposing_signals(
+            symbol=symbol,
+            candles_h4=candles_h4 or [],
+            candles_m15=candles_m15 or [],
+            candles_m5=candles_m5 or [],
+            opposite_direction=actual_direction,
+        )
+        missed, strongest, opposing_count = self._summarize_opposing_signals(opposing)
+
+        lesson = LossLesson(
+            trade_id=ticket,
+            symbol=symbol,
+            expected_direction=expected_direction,
+            actual_direction=actual_direction,
+            entry_reasons=entry_reasons,
+            entry_setups_detected=entry_setups,
+            entry_confidence=float(self._get_value(trade_record, "confidence", 0.0) or 0.0),
+            missed_opposing_signals=missed,
+            strongest_opposing_setup=strongest,
+            opposing_confluence_count=opposing_count,
+            lesson_summary=self._lesson_text(expected_direction, entry_reasons, missed, strongest),
+            created_at_utc=now,
+            htf_bias=str(self._get_value(trade_record, "htf_bias", "UNKNOWN") or "UNKNOWN"),
+            kill_zone=str(self._get_value(trade_record, "kill_zone", "UNKNOWN") or "UNKNOWN"),
+            spread_pips=float(self._get_value(trade_record, "spread_pips", 0.0) or 0.0),
+        )
+
+        self.total_losses_analyzed += 1
+        self.learned_lessons.append(lesson)
+        for missed_signal in lesson.missed_opposing_signals:
+            self.pattern_counter[missed_signal] += 1
+
+        logger.info(
+            "LOSS_ANALYZER_RUN ticket=%s symbol=%s dir=%s missed=%s strongest=%s opposing_count=%s",
+            ticket,
+            symbol,
+            expected_direction,
+            json.dumps(missed),
+            strongest or "NONE",
+            opposing_count,
+        )
+
         try:
-            cursor = self.memory.conn.cursor()
-            
-            cursor.execute("""
-            INSERT OR REPLACE INTO loss_lessons (
-                trade_id, symbol, expected_direction, actual_direction,
-                entry_reasons, missed_signals, strongest_opposing,
-                lesson_summary, new_rule, setup_to_avoid, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                lesson.trade_id,
-                lesson.symbol,
-                lesson.expected_direction,
-                lesson.actual_direction,
-                json.dumps(lesson.entry_reasons),
-                json.dumps(lesson.missed_opposing_signals),
-                lesson.strongest_opposing_setup,
-                lesson.lesson_summary,
-                lesson.new_rule_created,
-                lesson.setup_to_avoid,
-                lesson.timestamp
-            ))
-            
-            self.memory.conn.commit()
+            self.save_lesson_to_db(lesson)
         except Exception as e:
-            logger.error(f"Failed to save lesson to memory: {e}")
-    
-    def get_learning_stats(self) -> Dict:
-        """Get stats on what the bot has learned"""
-        stats = {
-            'total_losses_analyzed': self.total_losses_analyzed,
-            'lessons_learned': len(self.learned_lessons),
-            'adaptive_rules_created': len(self.adaptive_rules),
-            'active_rules': len([r for r in self.adaptive_rules if r.active]),
-            'trades_blocked': self.trades_blocked,
-            'setups_blacklisted': len(self.setup_blacklist),
-            'most_common_miss': None,
-            'most_effective_rule': None
-        }
-        
-        # Find most common thing we miss
-        all_missed = []
-        for lesson in self.learned_lessons:
-            all_missed.extend(lesson.missed_opposing_signals)
-        
-        if all_missed:
-            most_common = Counter(all_missed).most_common(1)[0]
-            stats['most_common_miss'] = f"{most_common[0]} (missed {most_common[1]} times)"
-        
-        # Find most effective rule
-        if self.adaptive_rules:
-            most_effective = max(self.adaptive_rules, key=lambda r: r.trades_blocked)
-            if most_effective.trades_blocked > 0:
-                stats['most_effective_rule'] = (
-                    f"Rule #{most_effective.rule_id}: {most_effective.description} "
-                    f"(blocked {most_effective.trades_blocked} trades)"
+            logger.error("ADAPTIVE_LEARNING_ERROR action=save_lesson ticket=%s err=%s", ticket, e, exc_info=True)
+
+        if self._is_enabled() and opposing_count >= 2:
+            try:
+                affected_setup = (entry_setups[0] if entry_setups else "UNKNOWN").upper()
+                check_for = str(strongest or "UNKNOWN").upper()
+                threshold = self._clamp(max(2, opposing_count), 2, 6)
+                if not self._candidate_exists(affected_setup, check_for, threshold):
+                    ttl_hours = int(self.al_cfg.get("candidate_ttl_hours", 72) or 72)
+                    expires = now + timedelta(hours=max(1, ttl_hours))
+                    candidate = AdaptiveRule(
+                        id=0,
+                        created_at_utc=now,
+                        rule_type="AVOIDANCE",
+                        affected_setup=affected_setup,
+                        check_for=check_for,
+                        check_direction="OPPOSITE",
+                        threshold=float(threshold),
+                        description=(
+                            f"Before {affected_setup}, verify opposing {check_for} confluence and block when "
+                            f"signals >= {threshold}."
+                        ),
+                        example=f"{affected_setup} entry blocked when opposing {check_for} confluence is high.",
+                        active=False,
+                        sample_size=0,
+                        wins_blocked_est=0.0,
+                        losses_prevented_est=float(opposing_count),
+                        times_triggered=0,
+                        trades_blocked=0,
+                        false_positives=0,
+                        last_triggered_utc=None,
+                        expires_at_utc=expires,
+                        status="CANDIDATE",
+                    )
+                    candidate_id = self.save_rule_to_db(candidate)
+                    candidate.id = candidate_id
+                    self.adaptive_rules.append(candidate)
+                    self.rules_created += 1
+                    logger.info(
+                        "ADAPTIVE_RULE_CANDIDATE_CREATED rule_id=%s setup=%s check_for=%s threshold=%.2f expires=%s",
+                        candidate.id,
+                        candidate.affected_setup,
+                        candidate.check_for,
+                        candidate.threshold,
+                        candidate.expires_at_utc.isoformat() if candidate.expires_at_utc else "NONE",
+                    )
+            except Exception as e:
+                logger.error("ADAPTIVE_LEARNING_ERROR action=create_candidate ticket=%s err=%s", ticket, e, exc_info=True)
+
+        return lesson
+
+    def load_rules_from_db(self) -> List[AdaptiveRule]:
+        self.adaptive_rules = []
+        if not hasattr(self.memory, "load_adaptive_rules"):
+            return self.adaptive_rules
+        try:
+            rows = self.memory.load_adaptive_rules() or []
+            for row in rows:
+                created = self._parse_time(row.get("created_at_utc")) or self._utcnow()
+                last_triggered = self._parse_time(row.get("last_triggered_utc"))
+                expires = self._parse_time(row.get("expires_at_utc"))
+                self.adaptive_rules.append(
+                    AdaptiveRule(
+                        id=int(row.get("id") or 0),
+                        created_at_utc=created,
+                        rule_type=str(row.get("rule_type") or ""),
+                        affected_setup=str(row.get("affected_setup") or ""),
+                        check_for=str(row.get("check_for") or ""),
+                        check_direction=str(row.get("check_direction") or ""),
+                        threshold=float(row.get("threshold") or 0.0),
+                        description=str(row.get("description") or ""),
+                        example=str(row.get("example") or ""),
+                        active=bool(row.get("active", False)),
+                        sample_size=int(row.get("sample_size") or 0),
+                        wins_blocked_est=float(row.get("wins_blocked_est") or 0.0),
+                        losses_prevented_est=float(row.get("losses_prevented_est") or 0.0),
+                        times_triggered=int(row.get("times_triggered") or 0),
+                        trades_blocked=int(row.get("trades_blocked") or 0),
+                        false_positives=int(row.get("false_positives") or 0),
+                        last_triggered_utc=last_triggered,
+                        expires_at_utc=expires,
+                        status=str(row.get("status") or "CANDIDATE").upper(),
+                    )
                 )
-        
-        return stats
+        except Exception as e:
+            logger.error("ADAPTIVE_LEARNING_ERROR action=load_rules err=%s", e, exc_info=True)
+        return list(self.adaptive_rules)
+
+    def save_lesson_to_db(self, lesson: LossLesson) -> int:
+        if not hasattr(self.memory, "save_learned_lesson"):
+            return 0
+        payload = {
+            "ticket": lesson.trade_id,
+            "symbol": lesson.symbol,
+            "expected_direction": lesson.expected_direction,
+            "actual_direction": lesson.actual_direction,
+            "entry_reasons_json": json.dumps(lesson.entry_reasons),
+            "entry_setups_json": json.dumps(lesson.entry_setups_detected),
+            "entry_confidence": lesson.entry_confidence,
+            "missed_opposing_signals_json": json.dumps(lesson.missed_opposing_signals),
+            "strongest_opposing_setup": lesson.strongest_opposing_setup,
+            "opposing_confluence_count": lesson.opposing_confluence_count,
+            "lesson_summary": lesson.lesson_summary,
+            "created_at_utc": lesson.created_at_utc,
+            "htf_bias": lesson.htf_bias,
+            "kill_zone": lesson.kill_zone,
+            "spread_pips": lesson.spread_pips,
+        }
+        return int(self.memory.save_learned_lesson(payload) or 0)
+
+    def save_rule_to_db(self, rule: AdaptiveRule) -> int:
+        if not hasattr(self.memory, "save_adaptive_rule"):
+            return 0
+        payload = {
+            "id": rule.id,
+            "created_at_utc": rule.created_at_utc,
+            "rule_type": rule.rule_type,
+            "affected_setup": rule.affected_setup,
+            "check_for": rule.check_for,
+            "check_direction": rule.check_direction,
+            "threshold": rule.threshold,
+            "description": rule.description,
+            "example": rule.example,
+            "active": rule.active,
+            "sample_size": rule.sample_size,
+            "wins_blocked_est": rule.wins_blocked_est,
+            "losses_prevented_est": rule.losses_prevented_est,
+            "times_triggered": rule.times_triggered,
+            "trades_blocked": rule.trades_blocked,
+            "false_positives": rule.false_positives,
+            "last_triggered_utc": rule.last_triggered_utc,
+            "expires_at_utc": rule.expires_at_utc,
+            "status": rule.status,
+        }
+        rid = int(self.memory.save_adaptive_rule(payload) or 0)
+        return rid
+
+    def _record_rule_event(
+        self,
+        rule_id: int,
+        symbol: str,
+        setup_id: str,
+        direction: str,
+        decision: str,
+        notes: str,
+    ):
+        if not hasattr(self.memory, "save_rule_event"):
+            return
+        try:
+            self.memory.save_rule_event(
+                {
+                    "rule_id": int(rule_id),
+                    "event_time_utc": self._utcnow(),
+                    "symbol": str(symbol or ""),
+                    "setup_id": str(setup_id or ""),
+                    "direction": str(direction or ""),
+                    "decision": str(decision or ""),
+                    "notes": str(notes or ""),
+                }
+            )
+        except Exception as e:
+            logger.error("ADAPTIVE_LEARNING_ERROR action=save_rule_event rule_id=%s err=%s", rule_id, e, exc_info=True)
+
+    def _rule_precision(self, rule: AdaptiveRule) -> float:
+        prevented = max(0.0, float(rule.losses_prevented_est) - float(rule.false_positives))
+        denominator = max(1, int(rule.trades_blocked or 0))
+        if denominator <= 0:
+            denominator = max(1, int(rule.sample_size or 0))
+        return prevented / float(max(1, denominator))
+
+    def _rule_matches_entry(self, rule: AdaptiveRule, setup_type: str) -> bool:
+        return str(rule.affected_setup or "").upper() == str(setup_type or "").upper()
+
+    def _rule_expired(self, rule: AdaptiveRule, now: datetime) -> bool:
+        return isinstance(rule.expires_at_utc, datetime) and now >= rule.expires_at_utc
+
+    def _rule_triggers(self, rule: AdaptiveRule, opposing: Dict) -> Tuple[bool, int, bool]:
+        opposing_count = 0
+        if opposing.get("fvg"):
+            opposing_count += len(opposing["fvg"])
+        opposing_count += 1 if opposing.get("stop_hunt") else 0
+        opposing_count += 1 if opposing.get("order_block") else 0
+        opposing_count += 1 if opposing.get("displacement") else 0
+        opposing_count += 1 if opposing.get("structure_break") else 0
+        opposing_count += 1 if opposing.get("liquidity_sweep") else 0
+
+        check_for = str(rule.check_for or "").upper()
+        check_hit = False
+        if check_for in ("", "UNKNOWN"):
+            check_hit = True
+        elif check_for == "FVG":
+            check_hit = len(opposing.get("fvg") or []) > 0
+        elif check_for == "STOP_HUNT":
+            check_hit = bool(opposing.get("stop_hunt"))
+        elif check_for == "ORDER_BLOCK":
+            check_hit = bool(opposing.get("order_block"))
+        elif check_for == "DISPLACEMENT":
+            check_hit = bool(opposing.get("displacement"))
+        elif check_for == "STRUCTURE_BREAK":
+            check_hit = bool(opposing.get("structure_break"))
+        elif check_for == "LIQUIDITY_SWEEP":
+            check_hit = bool(opposing.get("liquidity_sweep"))
+
+        return opposing_count >= int(rule.threshold), opposing_count, check_hit
+
+    def should_block_entry(
+        self,
+        symbol,
+        setup_type,
+        direction,
+        candles_h4,
+        candles_m15,
+        candles_m5,
+        setup_id: str = "",
+    ) -> Tuple[bool, str]:
+        if not self._is_enabled():
+            return False, "ADAPTIVE_DISABLED"
+
+        if not self._is_phase2_blocking():
+            return False, "ADAPTIVE_OBSERVE_ONLY"
+
+        now = self._utcnow()
+        entry_dir = self._to_direction(direction)
+        opposite_dir = "SELL" if entry_dir == "BUY" else "BUY"
+
+        setup_rules = [
+            r
+            for r in self.adaptive_rules
+            if r.active
+            and str(r.status).upper() == "ACTIVE"
+            and not self._rule_expired(r, now)
+            and self._rule_matches_entry(r, setup_type)
+        ]
+        if not setup_rules:
+            return False, "OK"
+
+        max_active = max(1, int(self.al_cfg.get("max_active_rules_per_setup", 5) or 5))
+        setup_rules = sorted(
+            setup_rules,
+            key=lambda r: (
+                self._rule_precision(r),
+                int(r.sample_size or 0),
+                -int(r.id or 0),
+            ),
+            reverse=True,
+        )[:max_active]
+
+        opposing = self._find_opposing_signals(
+            symbol=str(symbol or ""),
+            candles_h4=candles_h4 or [],
+            candles_m15=candles_m15 or [],
+            candles_m5=candles_m5 or [],
+            opposite_direction=opposite_dir,
+        )
+
+        for rule in setup_rules:
+            cooldown_seconds = int(self.al_cfg.get("cooldown_seconds_after_new_rule", 1800) or 1800)
+            age_seconds = (now - rule.created_at_utc).total_seconds()
+            if cooldown_seconds > 0 and age_seconds < cooldown_seconds:
+                continue
+
+            threshold_hit, opposing_count, check_hit = self._rule_triggers(rule, opposing)
+            if not (threshold_hit and check_hit):
+                continue
+
+            rule.times_triggered += 1
+            rule.sample_size += 1
+            rule.last_triggered_utc = now
+
+            trigger_notes = (
+                f"rule_id={rule.id} setup={setup_type} opposing_count={opposing_count} "
+                f"threshold={rule.threshold:.2f} check_for={rule.check_for}"
+            )
+            self._record_rule_event(rule.id, symbol, setup_id, direction, "TRIGGERED", trigger_notes)
+
+            if bool(self.al_cfg.get("shadow_mode", False)):
+                self.save_rule_to_db(rule)
+                self._record_rule_event(rule.id, symbol, setup_id, direction, "OVERRIDDEN", "WOULD_BLOCK shadow_mode=1")
+                logger.info("ADAPTIVE_SHADOW_WOULD_BLOCK %s", trigger_notes)
+                return False, f"WOULD_BLOCK rule_id={rule.id}"
+
+            rule.trades_blocked += 1
+            rule.losses_prevented_est += 1.0
+            self.trades_blocked += 1
+            self.save_rule_to_db(rule)
+            self._record_rule_event(rule.id, symbol, setup_id, direction, "BLOCKED", trigger_notes)
+            reason = f"ADAPTIVE_BLOCK rule_id={rule.id} setup={setup_type} check_for={rule.check_for}"
+            logger.warning(reason)
+            return True, reason
+
+        return False, "OK"
+
+    def validate_rules_job(self):
+        if not self._is_enabled():
+            return
+
+        now = self._utcnow()
+        min_losses = max(1, int(self.al_cfg.get("min_losses_before_rule", 5) or 5))
+        min_sample = max(1, int(self.al_cfg.get("min_rule_sample_size", 10) or 10))
+        min_precision = float(self.al_cfg.get("min_rule_precision", 0.65) or 0.65)
+        max_active = max(1, int(self.al_cfg.get("max_active_rules_per_setup", 5) or 5))
+
+        self.load_rules_from_db()
+
+        changed_rules: Dict[int, AdaptiveRule] = {}
+        for rule in self.adaptive_rules:
+            if self._rule_expired(rule, now) and str(rule.status).upper() != "DISABLED":
+                rule.status = "DISABLED"
+                rule.active = False
+                changed_rules[rule.id] = rule
+                self._record_rule_event(rule.id, "*", "", "", "DISABLED_AUTO", "expired")
+                continue
+
+            if hasattr(self.memory, "count_matching_lessons"):
+                matching_losses = int(self.memory.count_matching_lessons(rule.affected_setup, rule.check_for) or 0)
+            else:
+                matching_losses = 0
+            if hasattr(self.memory, "get_rule_events_count"):
+                event_count = int(self.memory.get_rule_events_count(rule.id) or 0)
+            else:
+                event_count = 0
+
+            rule.sample_size = max(int(rule.sample_size or 0), matching_losses, event_count)
+            if rule.losses_prevented_est <= 0 and matching_losses > 0:
+                rule.losses_prevented_est = float(matching_losses)
+
+            status = str(rule.status or "").upper()
+            precision = self._rule_precision(rule)
+
+            if status == "CANDIDATE":
+                if matching_losses >= min_losses and rule.sample_size >= min_sample:
+                    if precision >= min_precision:
+                        rule.status = "ACTIVE"
+                        rule.active = True
+                    else:
+                        rule.status = "DISABLED"
+                        rule.active = False
+                        self._record_rule_event(
+                            rule.id,
+                            "*",
+                            "",
+                            "",
+                            "DISABLED_AUTO",
+                            f"low_precision={precision:.3f}",
+                        )
+                    changed_rules[rule.id] = rule
+            elif status == "ACTIVE":
+                if rule.sample_size >= min_sample and precision < min_precision:
+                    rule.status = "DISABLED"
+                    rule.active = False
+                    changed_rules[rule.id] = rule
+                    self._record_rule_event(
+                        rule.id,
+                        "*",
+                        "",
+                        "",
+                        "DISABLED_AUTO",
+                        f"low_precision={precision:.3f}",
+                    )
+
+        active_by_setup: Dict[str, List[AdaptiveRule]] = {}
+        for rule in self.adaptive_rules:
+            if not rule.active or str(rule.status).upper() != "ACTIVE":
+                continue
+            setup = str(rule.affected_setup or "").upper()
+            active_by_setup.setdefault(setup, []).append(rule)
+
+        for setup, rules in active_by_setup.items():
+            ranked = sorted(
+                rules,
+                key=lambda r: (self._rule_precision(r), int(r.sample_size or 0), -int(r.id or 0)),
+                reverse=True,
+            )
+            keep_ids = {r.id for r in ranked[:max_active]}
+            for rule in ranked[max_active:]:
+                if rule.id in keep_ids:
+                    continue
+                rule.active = False
+                rule.status = "DISABLED"
+                changed_rules[rule.id] = rule
+                self._record_rule_event(rule.id, "*", "", "", "DISABLED_AUTO", f"max_active_per_setup={setup}")
+
+        for rule in changed_rules.values():
+            self.save_rule_to_db(rule)
+
+        if changed_rules:
+            logger.info(
+                "ADAPTIVE_RULE_VALIDATION updated=%s active=%s candidates=%s disabled=%s",
+                len(changed_rules),
+                len([r for r in self.adaptive_rules if r.active and str(r.status).upper() == "ACTIVE"]),
+                len([r for r in self.adaptive_rules if str(r.status).upper() == "CANDIDATE"]),
+                len([r for r in self.adaptive_rules if str(r.status).upper() == "DISABLED"]),
+            )
+
+    def get_learning_stats(self) -> Dict:
+        db_stats = {}
+        if hasattr(self.memory, "get_adaptive_learning_stats"):
+            try:
+                db_stats = dict(self.memory.get_adaptive_learning_stats() or {})
+            except Exception:
+                db_stats = {}
+
+        return {
+            "enabled": self._is_enabled(),
+            "phase": int(self.al_cfg.get("phase", 1)),
+            "entry_blocking_enabled": bool(self.al_cfg.get("entry_blocking_enabled", False)),
+            "shadow_mode": bool(self.al_cfg.get("shadow_mode", False)),
+            "total_losses_analyzed": int(self.total_losses_analyzed),
+            "lessons_in_memory": len(self.learned_lessons),
+            "rules_in_memory": len(self.adaptive_rules),
+            "rules_active_in_memory": len([r for r in self.adaptive_rules if r.active and str(r.status).upper() == "ACTIVE"]),
+            "trades_blocked": int(self.trades_blocked),
+            **db_stats,
+        }
