@@ -1,9 +1,23 @@
-# Sensitive config
+# Secrets (NEVER COMMIT)
+config/passwords.txt
 config/settings.json
 
-# Python
+# Runtime DBs
+memory/*.db
+memory/*.sqlite
+memory/*.sqlite3
+
+# Local artifacts
+python.zip
+analysis.txt
+
+# Python cache/venv
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
 
 # Logs
 logs/
