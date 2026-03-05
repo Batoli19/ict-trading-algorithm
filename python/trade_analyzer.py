@@ -166,13 +166,26 @@ class TradeAnalyzer:
         ensure_fn = getattr(self.memory, "ensure_entry_trade_from_deal", None)
         if not callable(ensure_fn):
             return
-        inserted = 0
-        linked = 0
+        bot_entry_deals = []
         for d in deals or []:
             if self._is_exit_deal(d):
                 continue
             if int(d.get("magic") or 0) != 20250101:
                 continue
+            bot_entry_deals.append(d)
+
+        backfill_fn = getattr(self.memory, "reconcile_unknown_setups_from_deals", None)
+        if callable(backfill_fn) and bot_entry_deals:
+            try:
+                updated = int(backfill_fn(bot_entry_deals) or 0)
+                if updated > 0:
+                    logger.warning("ANALYZER_SETUP_BACKFILL updated=%s", updated)
+            except Exception as e:
+                logger.error(f"ANALYZER_SETUP_BACKFILL_FAILED: {e}", exc_info=True)
+
+        inserted = 0
+        matched_existing = 0
+        for d in bot_entry_deals:
             try:
                 action = str(ensure_fn(d))
             except Exception as e:
@@ -181,9 +194,9 @@ class TradeAnalyzer:
             if action == "inserted":
                 inserted += 1
             elif action == "exists":
-                linked += 1
+                matched_existing += 1
         if inserted > 0:
-            logger.warning("ANALYZER_ENTRY_SYNC inserted=%s matched_existing=%s", inserted, linked)
+            logger.warning("ANALYZER_ENTRY_SYNC inserted=%s matched_existing=%s", inserted, matched_existing)
 
     def _find_exit_deal_for_db_trade(self, db_trade: Dict, deals: list[Dict]) -> Dict | None:
         position_id = self._to_int(db_trade.get("position_id"))

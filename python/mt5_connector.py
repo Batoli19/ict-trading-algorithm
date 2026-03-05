@@ -416,28 +416,59 @@ class MT5Connector:
     def get_today_trades(self) -> list:
         self.ensure_connected()
         today = datetime.utcnow().replace(hour=0, minute=0, second=0)
-        history = mt5.history_deals_get(today, datetime.utcnow())
+        now = datetime.utcnow()
+        history = mt5.history_deals_get(today, now)
         if history is None:
             return []
-        return self._normalize_deals(history)
+        comment_map = self._history_order_comment_map(today, now)
+        return self._normalize_deals(history, order_comment_map=comment_map)
 
     def get_deals_between(self, from_dt: datetime, to_dt: datetime) -> list:
         self.ensure_connected()
         history = mt5.history_deals_get(from_dt, to_dt)
         if history is None:
             return []
-        return self._normalize_deals(history)
+        comment_map = self._history_order_comment_map(from_dt, to_dt)
+        return self._normalize_deals(history, order_comment_map=comment_map)
 
-    def _normalize_deals(self, deals) -> list:
+    def _history_order_comment_map(self, from_dt: datetime, to_dt: datetime) -> dict:
+        out = {}
+        try:
+            orders = mt5.history_orders_get(from_dt, to_dt)
+        except Exception:
+            return out
+        if orders is None:
+            return out
+        for o in orders:
+            try:
+                ticket = int(getattr(o, "ticket", 0) or 0)
+            except Exception:
+                continue
+            if ticket <= 0:
+                continue
+            comment = str(getattr(o, "comment", "") or "").strip()
+            if comment and ticket not in out:
+                out[ticket] = comment
+        return out
+
+    def _normalize_deals(self, deals, order_comment_map: Optional[dict] = None) -> list:
+        order_comment_map = order_comment_map or {}
         out = []
         for d in deals:
             deal_type = "BUY" if d.type == mt5.DEAL_TYPE_BUY else "SELL"
             position_id = getattr(d, "position_id", None) or getattr(d, "position", None)
             deal_entry = getattr(d, "entry", None)
+            order_ticket = getattr(d, "order", None)
+            comment = str(getattr(d, "comment", "") or "")
+            if not comment and order_ticket is not None:
+                try:
+                    comment = str(order_comment_map.get(int(order_ticket), "") or "")
+                except Exception:
+                    comment = ""
             out.append({
                 "deal_ticket": d.ticket,
                 "ticket": d.ticket,
-                "order_ticket": getattr(d, "order", None),
+                "order_ticket": order_ticket,
                 "position_id": position_id,
                 "symbol": d.symbol,
                 "entry": deal_entry,
@@ -447,5 +478,6 @@ class MT5Connector:
                 "volume": d.volume,
                 "time": datetime.utcfromtimestamp(d.time).isoformat(),
                 "magic": getattr(d, "magic", None),
+                "comment": comment,
             })
         return out

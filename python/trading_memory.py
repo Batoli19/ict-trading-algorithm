@@ -21,6 +21,26 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("MEMORY")
 
+KNOWN_SETUP_TYPES = (
+    "FVG",
+    "TURTLE_SOUP",
+    "STOP_HUNT",
+    "ORDER_BLOCK",
+    "SCALP",
+    "SNIPER",
+    "MANIPULATION",
+    "ENGULFING",
+    "PIN_BAR",
+)
+
+SETUP_ALIASES = {
+    "ORDERBLOCK": "ORDER_BLOCK",
+    "STOPHUNT": "STOP_HUNT",
+    "PINBAR": "PIN_BAR",
+    "TURTLESOUP": "TURTLE_SOUP",
+    "SCALPING": "SCALP",
+}
+
 
 @dataclass
 class TradeMemory:
@@ -389,14 +409,83 @@ class TradingMemoryDB:
         if text.startswith("ICT_"):
             text = text[4:]
         text = text.replace("_LIMIT", "").replace("_CLOSE", "").strip("_")
+
+        def _canonical(candidate: str) -> str:
+            c = str(candidate or "").strip().upper().replace("-", "_")
+            if not c:
+                return "UNKNOWN"
+            if c in KNOWN_SETUP_TYPES:
+                return c
+            compact = re.sub(r"[^A-Z0-9]", "", c)
+            return SETUP_ALIASES.get(compact, "UNKNOWN")
+
+        direct = _canonical(text)
+        if direct != "UNKNOWN":
+            return direct
+
+        for setup in KNOWN_SETUP_TYPES:
+            if setup in text:
+                return setup
+
         parts = [p for p in re.split(r"[^A-Z0-9]+", text) if p]
         if len(parts) >= 2:
-            joined2 = f"{parts[0]}_{parts[1]}"
-            if joined2 in {"ORDER_BLOCK", "STOP_HUNT", "PIN_BAR"}:
+            joined2 = _canonical(f"{parts[0]}_{parts[1]}")
+            if joined2 != "UNKNOWN":
                 return joined2
         if parts:
-            return parts[0]
+            single = _canonical(parts[0])
+            if single != "UNKNOWN":
+                return single
         return "UNKNOWN"
+
+    def reconcile_unknown_setups_from_deals(self, deals: List[Dict]) -> int:
+        """Backfill UNKNOWN setup_type rows when deal comments contain setup names."""
+        if not deals:
+            return 0
+
+        cursor = self.conn.cursor()
+        updated = 0
+
+        for deal in deals:
+            setup_type = self.infer_setup_type_from_comment(deal.get("comment"))
+            if setup_type == "UNKNOWN":
+                continue
+
+            try:
+                position_id = int(deal.get("position_id") or 0)
+                order_ticket = int(deal.get("order_ticket") or 0)
+                deal_ticket = int(deal.get("deal_ticket") or deal.get("ticket") or 0)
+            except Exception:
+                continue
+
+            canonical_ticket = position_id if position_id > 0 else (order_ticket if order_ticket > 0 else deal_ticket)
+
+            cursor.execute(
+                """
+                UPDATE trades
+                SET setup_type = ?
+                WHERE (setup_type IS NULL OR setup_type = '' OR UPPER(setup_type) = 'UNKNOWN')
+                  AND (
+                       (position_id IS NOT NULL AND position_id = ?)
+                    OR (ticket IS NOT NULL AND ticket = ?)
+                    OR (order_ticket IS NOT NULL AND order_ticket = ?)
+                    OR (deal_ticket IS NOT NULL AND deal_ticket = ?)
+                  )
+                """,
+                (
+                    setup_type,
+                    position_id if position_id > 0 else -1,
+                    canonical_ticket if canonical_ticket > 0 else -1,
+                    order_ticket if order_ticket > 0 else -1,
+                    deal_ticket if deal_ticket > 0 else -1,
+                ),
+            )
+            updated += int(cursor.rowcount or 0)
+
+        if updated > 0:
+            self.conn.commit()
+            logger.warning("DB_SETUP_BACKFILL_FROM_DEALS updated=%s", updated)
+        return updated
 
     def ensure_open_trade_from_position(self, position: Dict) -> str:
         """Ensure a live MT5 position exists in DB as an open trade.
@@ -443,7 +532,9 @@ class TradingMemoryDB:
                     order_ticket = COALESCE(order_ticket, ?),
                     symbol = CASE WHEN symbol IS NULL OR symbol = '' THEN ? ELSE symbol END,
                     direction = CASE WHEN direction IS NULL OR direction = '' THEN ? ELSE direction END,
-                    setup_type = CASE WHEN setup_type IS NULL OR setup_type = '' THEN ? ELSE setup_type END,
+                    setup_type = CASE
+                        WHEN setup_type IS NULL OR setup_type = '' OR UPPER(setup_type) = 'UNKNOWN'
+                        THEN ? ELSE setup_type END,
                     entry_price = CASE WHEN entry_price IS NULL OR entry_price = 0 THEN ? ELSE entry_price END,
                     sl_price = CASE WHEN sl_price IS NULL OR sl_price = 0 THEN ? ELSE sl_price END,
                     tp_price = CASE WHEN tp_price IS NULL OR tp_price = 0 THEN ? ELSE tp_price END,
@@ -551,6 +642,18 @@ class TradingMemoryDB:
         )
         row = cursor.fetchone()
         if row:
+            if setup_type != "UNKNOWN":
+                cursor.execute(
+                    """
+                    UPDATE trades
+                    SET setup_type = ?
+                    WHERE id = ?
+                      AND (setup_type IS NULL OR setup_type = '' OR UPPER(setup_type) = 'UNKNOWN')
+                    """,
+                    (setup_type, int(row[0])),
+                )
+                if cursor.rowcount:
+                    self.conn.commit()
             return "exists"
 
         try:

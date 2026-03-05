@@ -20,17 +20,17 @@
   "mode": {
     "type": "hybrid",
     "pairs_focus": ["XAUUSD", "EURUSD", "USDJPY", "USDCHF", "GBPUSD", "AUDUSD"],
-    "session_pair_rules": true,
+    "session_pair_rules": false,
     "cooldown": {
-      "per_symbol_seconds": 900,
-      "after_loss_seconds": 1800,
-      "after_win_seconds": 600,
-      "global_after_loss_seconds": 900
+      "per_symbol_seconds": 0,
+      "after_loss_seconds": 0,
+      "after_win_seconds": 0,
+      "global_after_loss_seconds": 0
     }
   },
 
   "execution": {
-    "profile": "PROP_CHALLENGE",
+    "profile": "normal",
     "force_enable_setups": ["FVG"],
     "min_confidence": 0.68,
     "min_rr": 1.6,
@@ -52,7 +52,7 @@
     },
     "max_sl_usd": 50,
     "prop": {
-      "enabled": true,
+      "enabled": false,
       "base_risk_per_trade_pct": 0.75,
       "max_risk_per_trade_pct": 1.0,
       "max_open_trades": 2,
@@ -174,9 +174,9 @@
   },
 
   "prop_guardrails": {
-    "enabled": true,
-    "daily_profit_lock_pct": 1.8,
-    "daily_loss_cap_pct": 2.0,
+    "enabled": false,
+    "daily_profit_lock_pct": 0.0,
+    "daily_loss_cap_pct": 99.0,
     "loss_streak_limit": 3,
     "pause_minutes_on_streak": 120,
     "stop_for_day_on_streak": false,
@@ -185,9 +185,9 @@
   },
 
   "correlation": {
-    "enabled": true,
-    "max_same_thesis_open": 2,
-    "max_usd_short_open": 2,
+    "enabled": false,
+    "max_same_thesis_open": 99,
+    "max_usd_short_open": 99,
     "single_loss_risk_scale": 0.5,
     "single_loss_risk_scale_seconds": 3600,
     "cooldown_seconds_after_thesis_loss": 1800,
@@ -235,11 +235,11 @@
   "risk": {
   "risk_per_trade_pct": 1.5,
   "max_open_trades": 3,
-  "max_cumulative_loss_pct": 8,
-  "max_consecutive_losses": 3,
-  "loss_streak_cooldown_minutes": 60,
-  "max_trades_per_symbol_per_hour": 6,
-  "max_loss_trades_per_symbol_per_hour": 3,
+  "max_cumulative_loss_pct": 99,
+  "max_consecutive_losses": 0,
+  "loss_streak_cooldown_minutes": 0,
+  "max_trades_per_symbol_per_hour": 999,
+  "max_loss_trades_per_symbol_per_hour": 999,
   "cooldown_win_minutes": 10,
   "cooldown_loss_minutes": 45,
   "cooldown_global_minutes": 3,
@@ -250,8 +250,9 @@
   "equity_dd_stop_pct": 5.0,
   "xauusd_max_trades_per_day": 50,
   "max_total_open_risk_pct": 3.0,
-  "max_daily_loss_pct": 5.0,
-  "max_daily_trades": 100,
+  "max_daily_loss_pct": 99.0,
+  "max_daily_trades": 10000,
+  "daily_profit_target_usd": 1000000000,
   "rr_ratio": 2.0,
   "trailing_stop": true,
   "trailing_stop_pips": 0,
@@ -276,12 +277,12 @@
     "allowed_kill_zones": ["LONDON_OPEN", "NY_OPEN", "LONDON_CLOSE"],
     "min_rr": 1.6,
     "min_confidence": 0.65,
-    "cooldown_after_close_seconds": 900,
-    "cooldown_after_loss_seconds": 1800,
-    "cooldown_after_win_seconds": 600,
-    "max_trades_per_day_total": 12,
-    "max_trades_per_symbol_per_day": 3,
-    "max_trades_per_killzone_per_symbol": 1,
+    "cooldown_after_close_seconds": 0,
+    "cooldown_after_loss_seconds": 0,
+    "cooldown_after_win_seconds": 0,
+    "max_trades_per_day_total": 0,
+    "max_trades_per_symbol_per_day": 0,
+    "max_trades_per_killzone_per_symbol": 0,
     "max_open_trades": 3,
     "block_reentry_same_direction": true,
     "reentry_requires_new_setup": true
