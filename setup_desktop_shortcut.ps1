@@ -1,7 +1,7 @@
 ﻿param(
     [string]$RepoRoot = "C:\Users\user\Documents\BAC\ict_trading_bot",
     [string]$ShortcutName = "ICT Trading Bot",
-    [string]$LauncherPath = "C:\Users\user\Documents\BAC\ict_trading_bot\bot_launcher.pyw",
+    [string]$LauncherPath = "",
     [string]$PythonwPath = "",
     [string]$IconPath = ""
 )
@@ -10,8 +10,18 @@ if (-not (Test-Path $RepoRoot)) {
     throw "Repo root not found: $RepoRoot"
 }
 
+if ([string]::IsNullOrWhiteSpace($LauncherPath)) {
+    $rootLauncher = Join-Path $RepoRoot "bot_launcher.pyw"
+    $fallbackLauncher = Join-Path $RepoRoot "bot luncher\bot_launcher.pyw"
+    if (Test-Path $rootLauncher) {
+        $LauncherPath = $rootLauncher
+    } elseif (Test-Path $fallbackLauncher) {
+        $LauncherPath = $fallbackLauncher
+    }
+}
+
 if (-not (Test-Path $LauncherPath)) {
-    throw "Launcher not found: $LauncherPath"
+    throw "Launcher not found. Checked: '$LauncherPath' and default locations under $RepoRoot"
 }
 
 if ([string]::IsNullOrWhiteSpace($PythonwPath)) {

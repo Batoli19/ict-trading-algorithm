@@ -5,6 +5,7 @@ Enhanced version with Memory & Brain system added to your existing code.
 
 import asyncio
 import logging
+import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -52,6 +53,8 @@ class TradingEngine:
         self.trailing = StructureTrailingManager(self.cfg)
         self.loss_analyzer = LossAnalyzer(self.mt5, self.strategy, self.memory, self.cfg)
         self._sl_update_attempts: dict[int, int] = {}
+        self._tm_partial_retry_after: dict[str, float] = {}
+        self._tm_invalid_risk_logged: set[str] = set()
 
         self._scan_interval = 10
         self._manage_interval = 5
@@ -878,6 +881,8 @@ class TradingEngine:
         info_cache: dict[str, dict] = {}
         candles_m5_cache: dict[str, list] = {}
         candles_m1_cache: dict[str, list] = {}
+        tm_cfg = self._trade_management_config()
+        now_mono = time.monotonic()
 
         for pos in positions:
             symbol = str(pos["symbol"])
@@ -897,6 +902,36 @@ class TradingEngine:
 
             bid = float(tick["bid"])
             ask = float(tick["ask"])
+
+            symbol_info = info_cache.get(symbol)
+            if symbol_info is None and hasattr(self.mt5, "get_symbol_info"):
+                symbol_info = self.mt5.get_symbol_info(symbol) or {}
+                info_cache[symbol] = symbol_info
+
+            open_trade = None
+            if hasattr(self.memory, "find_open_trade_for_exit"):
+                try:
+                    open_trade = self.memory.find_open_trade_for_exit(position_id=ticket, ticket=ticket)
+                except Exception:
+                    open_trade = None
+
+            tm_res = self._apply_trade_management_rules(
+                position=pos,
+                bid=bid,
+                ask=ask,
+                symbol_info=symbol_info or {},
+                open_trade=open_trade,
+                tm_cfg=tm_cfg,
+                now_mono=now_mono,
+            )
+            if bool(tm_res.get("closed", False)):
+                continue
+            if isinstance(tm_res.get("sl_updated"), (float, int)):
+                pos["sl"] = float(tm_res["sl_updated"])
+                current_sl = float(pos.get("sl", 0.0) or 0.0)
+            if bool(tm_res.get("skip_trailing", False)):
+                continue
+
             candles_m5 = candles_m5_cache.get(symbol)
             if candles_m5 is None:
                 candles_m5 = self.mt5.get_candles(symbol, "M5", 150)
@@ -908,10 +943,6 @@ class TradingEngine:
             if not candles_m5 and not candles_m1:
                 continue
 
-            symbol_info = info_cache.get(symbol)
-            if symbol_info is None and hasattr(self.mt5, "get_symbol_info"):
-                symbol_info = self.mt5.get_symbol_info(symbol) or {}
-                info_cache[symbol] = symbol_info
             eval_res = self.trailing.evaluate_position(
                 position=pos,
                 candles_m5=list(candles_m5 or []),
@@ -963,6 +994,490 @@ class TradingEngine:
                     f"broker_error={comment or last_error} stop_level={stops_level} stop_dist={stop_dist:.5f} "
                     f"freeze_level={freeze_level} freeze_dist={freeze_dist:.5f}"
                 )
+
+        self._cleanup_partial_retry_cache(positions, now_mono)
+
+    def _trade_management_config(self) -> dict:
+        root = self.cfg.get("trade_management", {}) if isinstance(self.cfg.get("trade_management", {}), dict) else {}
+        partials_raw = root.get("partials", {}) if isinstance(root.get("partials", {}), dict) else {}
+        giveback_raw = root.get("giveback_guard", {}) if isinstance(root.get("giveback_guard", {}), dict) else {}
+        time_exit_raw = root.get("time_exit", {}) if isinstance(root.get("time_exit", {}), dict) else {}
+
+        tp1_sl_mode = str(partials_raw.get("tp1_sl_mode", "BE_PLUS")).upper().strip()
+        if tp1_sl_mode not in ("BE", "BE_PLUS"):
+            tp1_sl_mode = "BE_PLUS"
+
+        return {
+            "partials": {
+                "enabled": bool(partials_raw.get("enabled", True)),
+                "tp1_r": float(partials_raw.get("tp1_r", 1.0) or 1.0),
+                "tp1_close_pct": float(partials_raw.get("tp1_close_pct", 0.60) or 0.60),
+                "tp1_sl_mode": tp1_sl_mode,
+                "tp1_be_plus_r": float(partials_raw.get("tp1_be_plus_r", 0.05) or 0.05),
+                "tp2_enabled": bool(partials_raw.get("tp2_enabled", True)),
+                "tp2_r": float(partials_raw.get("tp2_r", 2.0) or 2.0),
+                "tp2_close_pct": float(partials_raw.get("tp2_close_pct", 0.25) or 0.25),
+                "tp2_sl_lock_r": float(partials_raw.get("tp2_sl_lock_r", 1.0) or 1.0),
+                "trail_only_after_tp1": bool(partials_raw.get("trail_only_after_tp1", True)),
+            },
+            "giveback_guard": {
+                "enabled": bool(giveback_raw.get("enabled", True)),
+                "activate_at_r": float(giveback_raw.get("activate_at_r", 1.2) or 1.2),
+                "max_giveback_pct": float(giveback_raw.get("max_giveback_pct", 0.60) or 0.60),
+            },
+            "time_exit": {
+                "enabled": bool(time_exit_raw.get("enabled", False)),
+                "max_minutes_open": int(time_exit_raw.get("max_minutes_open", 90) or 90),
+            },
+            "partial_retry_seconds": max(10, int(root.get("partial_retry_seconds", 60) or 60)),
+        }
+
+    def _trade_id_from_position(self, position: dict) -> str:
+        try:
+            ticket = int(position.get("ticket", 0) or 0)
+        except Exception:
+            ticket = 0
+        return str(ticket) if ticket > 0 else ""
+
+    def _sl_tightens(self, side: str, current_sl: float, candidate_sl: float, point: float = 0.0) -> bool:
+        eps = max(float(point or 0.0) * 0.2, 1e-9)
+        if candidate_sl <= 0:
+            return False
+        if side == "BUY":
+            return current_sl <= 0 or candidate_sl > (current_sl + eps)
+        if side == "SELL":
+            return current_sl <= 0 or candidate_sl < (current_sl - eps)
+        return False
+
+    def _apply_position_sl(self, ticket: int, side: str, current_sl: float, candidate_sl: float, point: float = 0.0) -> dict:
+        if not self._sl_tightens(side, current_sl, candidate_sl, point=point):
+            return {"ok": False, "reason": "not_tightening", "new_sl": current_sl}
+
+        if hasattr(self.mt5, "modify_position_sl"):
+            mod = self.mt5.modify_position_sl(ticket, candidate_sl)
+            ok = bool(mod.get("ok", False))
+            retcode = mod.get("retcode")
+            comment = str(mod.get("comment", ""))
+            last_error = str(mod.get("last_error", ""))
+        elif hasattr(self.mt5, "modify_sl_tp_detailed"):
+            live_pos = next((p for p in self.mt5.get_open_positions() if int(p.get("ticket", 0) or 0) == int(ticket)), None)
+            live_tp = float((live_pos or {}).get("tp", 0.0) or 0.0)
+            mod = self.mt5.modify_sl_tp_detailed(ticket, candidate_sl, live_tp)
+            ok = bool(mod.get("ok", False))
+            retcode = mod.get("retcode")
+            comment = str(mod.get("comment", ""))
+            last_error = str(mod.get("last_error", ""))
+        else:
+            ok = bool(self.mt5.modify_sl_tp(ticket, candidate_sl, 0.0))
+            retcode = None
+            comment = ""
+            last_error = ""
+
+        if ok:
+            return {"ok": True, "reason": "updated", "new_sl": float(candidate_sl)}
+        return {
+            "ok": False,
+            "reason": "broker_reject",
+            "new_sl": current_sl,
+            "retcode": retcode,
+            "comment": comment,
+            "last_error": last_error,
+        }
+
+    def _persist_trade_mgmt_state(
+        self,
+        trade_id: str,
+        tp1_done: bool,
+        tp2_done: bool,
+        initial_risk: float,
+        original_volume: float,
+        peak_r: float,
+        activated_giveback: bool,
+        opened_ts: str,
+    ):
+        upsert_fn = getattr(self.memory, "upsert_trade_mgmt_state", None)
+        if not callable(upsert_fn):
+            return
+        try:
+            upsert_fn(
+                trade_id=trade_id,
+                tp1_done=bool(tp1_done),
+                tp2_done=bool(tp2_done),
+                initial_risk=float(initial_risk),
+                original_volume=float(original_volume),
+                peak_r=float(peak_r),
+                activated_giveback=bool(activated_giveback),
+                opened_ts=str(opened_ts or ""),
+            )
+        except Exception as e:
+            logger.error("TRADE_MGMT_STATE_UPSERT_FAILED trade_id=%s err=%s", trade_id, e, exc_info=True)
+
+    def _is_permanent_partial_reject(self, reason: str) -> bool:
+        code = str(reason or "").upper().strip()
+        permanent = {
+            "REQUESTED_VOLUME_NON_POSITIVE",
+            "POSITION_VOLUME_NON_POSITIVE",
+            "VOLUME_BELOW_MIN_LOT",
+            "REMAINDER_BELOW_MIN_LOT",
+            "PARTIAL_EQUALS_FULL_POSITION",
+            "INVALID_CLOSE_VOLUME",
+        }
+        return code in permanent
+
+    def _apply_trade_management_rules(
+        self,
+        position: dict,
+        bid: float,
+        ask: float,
+        symbol_info: dict,
+        open_trade: Optional[dict],
+        tm_cfg: dict,
+        now_mono: float,
+    ) -> dict:
+        result = {"closed": False, "skip_trailing": False, "sl_updated": None}
+
+        trade_id = self._trade_id_from_position(position)
+        if not trade_id:
+            return result
+
+        ticket = int(position.get("ticket", 0) or 0)
+        symbol = str(position.get("symbol", "")).upper()
+        side = str(position.get("type", "")).upper()
+        if ticket <= 0 or side not in ("BUY", "SELL"):
+            return result
+
+        entry_price = float(position.get("open_price", 0.0) or 0.0)
+        if entry_price <= 0.0:
+            return result
+
+        partials_cfg = tm_cfg.get("partials", {})
+        giveback_cfg = tm_cfg.get("giveback_guard", {})
+        time_exit_cfg = tm_cfg.get("time_exit", {})
+        partials_enabled = bool(partials_cfg.get("enabled", False))
+        giveback_enabled = bool(giveback_cfg.get("enabled", False))
+        time_exit_enabled = bool(time_exit_cfg.get("enabled", False))
+        trail_after_tp1 = bool(partials_cfg.get("trail_only_after_tp1", True))
+
+        state_fn = getattr(self.memory, "get_trade_mgmt_state", None)
+        state = state_fn(trade_id) if callable(state_fn) else None
+        state = dict(state or {})
+        tp1_done = bool(state.get("tp1_done", False))
+        tp2_done = bool(state.get("tp2_done", False))
+        initial_risk = float(state.get("initial_risk", 0.0) or 0.0)
+        original_volume = float(state.get("original_volume", 0.0) or 0.0)
+        peak_r = float(state.get("peak_r", 0.0) or 0.0)
+        activated_giveback = bool(state.get("activated_giveback", False))
+
+        opened_ts = str(state.get("opened_ts", "") or "")
+        if not opened_ts:
+            open_time = position.get("open_time")
+            if isinstance(open_time, datetime):
+                opened_ts = open_time.isoformat()
+            else:
+                opened_ts = datetime.utcnow().isoformat()
+
+        # Optional time-based full close independent of R logic.
+        if time_exit_enabled:
+            max_minutes_open = max(1, int(time_exit_cfg.get("max_minutes_open", 90) or 90))
+            open_time = position.get("open_time")
+            if isinstance(open_time, datetime):
+                open_minutes = (datetime.utcnow() - open_time).total_seconds() / 60.0
+                if open_minutes >= float(max_minutes_open):
+                    if self.mt5.close_position(ticket):
+                        logger.warning(
+                            "TIME_EXIT_CLOSE: ticket=%s symbol=%s side=%s open_minutes=%.1f max=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            open_minutes,
+                            max_minutes_open,
+                        )
+                        if hasattr(self.memory, "update_exit_analysis"):
+                            try:
+                                self.memory.update_exit_analysis(
+                                    ticket=ticket,
+                                    tp_hit_reason="TIME_EXIT",
+                                    lessons="Position closed by configured time_exit rule.",
+                                )
+                            except Exception:
+                                pass
+                        result["closed"] = True
+                        return result
+                    logger.warning(
+                        "TIME_EXIT_CLOSE_REJECTED: ticket=%s symbol=%s side=%s open_minutes=%.1f max=%s",
+                        ticket,
+                        symbol,
+                        side,
+                        open_minutes,
+                        max_minutes_open,
+                    )
+
+        if not partials_enabled and not giveback_enabled:
+            return result
+
+        state_dirty = False
+        if initial_risk <= 0.0:
+            initial_sl = 0.0
+            if isinstance(open_trade, dict):
+                initial_sl = float(open_trade.get("sl_price", 0.0) or 0.0)
+            if initial_sl <= 0.0:
+                initial_sl = float(position.get("sl", 0.0) or 0.0)
+            initial_risk = abs(entry_price - initial_sl)
+            state_dirty = True
+
+        if original_volume <= 0.0:
+            if isinstance(open_trade, dict):
+                original_volume = float(open_trade.get("lot_size", 0.0) or 0.0)
+            if original_volume <= 0.0:
+                original_volume = float(position.get("volume", 0.0) or 0.0)
+            state_dirty = True
+
+        if initial_risk <= 0.0:
+            if trade_id not in self._tm_invalid_risk_logged:
+                self._tm_invalid_risk_logged.add(trade_id)
+                logger.warning(
+                    "TRADE_MGMT_DISABLED_INVALID_RISK: ticket=%s symbol=%s side=%s entry=%.5f sl=%.5f",
+                    ticket,
+                    symbol,
+                    side,
+                    entry_price,
+                    float(position.get("sl", 0.0) or 0.0),
+                )
+            if state_dirty:
+                self._persist_trade_mgmt_state(
+                    trade_id=trade_id,
+                    tp1_done=tp1_done,
+                    tp2_done=tp2_done,
+                    initial_risk=initial_risk,
+                    original_volume=original_volume,
+                    peak_r=peak_r,
+                    activated_giveback=activated_giveback,
+                    opened_ts=opened_ts,
+                )
+            result["skip_trailing"] = bool(partials_enabled and trail_after_tp1 and not tp1_done)
+            return result
+
+        sign = 1.0 if side == "BUY" else -1.0
+        exit_price = float(bid if side == "BUY" else ask)
+        r_now = ((exit_price - entry_price) / initial_risk) if side == "BUY" else ((entry_price - exit_price) / initial_risk)
+
+        current_sl = float(position.get("sl", 0.0) or 0.0)
+        point = float((symbol_info or {}).get("point", 0.0) or 0.0)
+        retry_seconds = max(10, int(tm_cfg.get("partial_retry_seconds", 60) or 60))
+
+        if partials_enabled and not tp1_done and r_now >= float(partials_cfg.get("tp1_r", 1.0) or 1.0):
+            tp1_key = f"{trade_id}:TP1"
+            retry_after = float(self._tm_partial_retry_after.get(tp1_key, 0.0) or 0.0)
+            if now_mono >= retry_after:
+                req_volume = float(position.get("volume", 0.0) or 0.0) * float(partials_cfg.get("tp1_close_pct", 0.60) or 0.60)
+                partial = self.mt5.partial_close_position(ticket, req_volume) if hasattr(self.mt5, "partial_close_position") else {"ok": False, "comment": "PARTIAL_CLOSE_NOT_SUPPORTED"}
+                if bool(partial.get("ok", False)):
+                    closed_volume = float(partial.get("closed_volume", 0.0) or 0.0)
+                    mode = str(partials_cfg.get("tp1_sl_mode", "BE_PLUS")).upper()
+                    if mode == "BE_PLUS":
+                        tp1_sl = entry_price + (sign * float(partials_cfg.get("tp1_be_plus_r", 0.05) or 0.05) * initial_risk)
+                    else:
+                        tp1_sl = entry_price
+                    sl_res = self._apply_position_sl(ticket, side, current_sl, tp1_sl, point=point)
+                    if bool(sl_res.get("ok", False)):
+                        current_sl = float(sl_res.get("new_sl", current_sl) or current_sl)
+                        result["sl_updated"] = current_sl
+                    tp1_done = True
+                    state_dirty = True
+                    self._tm_partial_retry_after.pop(tp1_key, None)
+                    logger.info(
+                        "TP1_EXECUTED: ticket=%s symbol=%s side=%s R=%.2f closed_volume=%.2f new_sl=%.5f",
+                        ticket,
+                        symbol,
+                        side,
+                        r_now,
+                        closed_volume,
+                        current_sl,
+                    )
+                    if not bool(sl_res.get("ok", False)):
+                        logger.warning(
+                            "TP1_BE_MOVE_REJECTED: ticket=%s symbol=%s side=%s target_sl=%.5f retcode=%s broker_error=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            tp1_sl,
+                            sl_res.get("retcode"),
+                            str(sl_res.get("comment", "")) or str(sl_res.get("last_error", "")),
+                        )
+                else:
+                    reason = str(partial.get("comment", "PARTIAL_REJECTED"))
+                    self._tm_partial_retry_after[tp1_key] = now_mono + retry_seconds
+                    if self._is_permanent_partial_reject(reason):
+                        tp1_done = True
+                        state_dirty = True
+                        logger.warning(
+                            "TP1_SKIPPED_VOLUME: ticket=%s symbol=%s side=%s R=%.2f reason=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            r_now,
+                            reason,
+                        )
+                    else:
+                        logger.warning(
+                            "TP1_REJECTED: ticket=%s symbol=%s side=%s R=%.2f retcode=%s reason=%s broker_error=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            r_now,
+                            partial.get("retcode"),
+                            reason,
+                            str(partial.get("last_error", "")),
+                        )
+
+        if (
+            partials_enabled
+            and bool(partials_cfg.get("tp2_enabled", True))
+            and not tp2_done
+            and r_now >= float(partials_cfg.get("tp2_r", 2.0) or 2.0)
+        ):
+            tp2_key = f"{trade_id}:TP2"
+            retry_after = float(self._tm_partial_retry_after.get(tp2_key, 0.0) or 0.0)
+            if now_mono >= retry_after:
+                req_volume = float(original_volume) * float(partials_cfg.get("tp2_close_pct", 0.25) or 0.25)
+                partial = self.mt5.partial_close_position(ticket, req_volume) if hasattr(self.mt5, "partial_close_position") else {"ok": False, "comment": "PARTIAL_CLOSE_NOT_SUPPORTED"}
+                if bool(partial.get("ok", False)):
+                    closed_volume = float(partial.get("closed_volume", 0.0) or 0.0)
+                    tp2_sl = entry_price + (sign * float(partials_cfg.get("tp2_sl_lock_r", 1.0) or 1.0) * initial_risk)
+                    sl_res = self._apply_position_sl(ticket, side, current_sl, tp2_sl, point=point)
+                    if bool(sl_res.get("ok", False)):
+                        current_sl = float(sl_res.get("new_sl", current_sl) or current_sl)
+                        result["sl_updated"] = current_sl
+                    tp2_done = True
+                    state_dirty = True
+                    self._tm_partial_retry_after.pop(tp2_key, None)
+                    logger.info(
+                        "TP2_EXECUTED: ticket=%s symbol=%s side=%s R=%.2f closed_volume=%.2f new_sl=%.5f",
+                        ticket,
+                        symbol,
+                        side,
+                        r_now,
+                        closed_volume,
+                        current_sl,
+                    )
+                    if not bool(sl_res.get("ok", False)):
+                        logger.warning(
+                            "TP2_LOCK_REJECTED: ticket=%s symbol=%s side=%s target_sl=%.5f retcode=%s broker_error=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            tp2_sl,
+                            sl_res.get("retcode"),
+                            str(sl_res.get("comment", "")) or str(sl_res.get("last_error", "")),
+                        )
+                else:
+                    reason = str(partial.get("comment", "PARTIAL_REJECTED"))
+                    self._tm_partial_retry_after[tp2_key] = now_mono + retry_seconds
+                    if self._is_permanent_partial_reject(reason):
+                        tp2_done = True
+                        state_dirty = True
+                        logger.warning(
+                            "TP2_SKIPPED_VOLUME: ticket=%s symbol=%s side=%s R=%.2f reason=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            r_now,
+                            reason,
+                        )
+                    else:
+                        logger.warning(
+                            "TP2_REJECTED: ticket=%s symbol=%s side=%s R=%.2f retcode=%s reason=%s broker_error=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            r_now,
+                            partial.get("retcode"),
+                            reason,
+                            str(partial.get("last_error", "")),
+                        )
+
+        if giveback_enabled:
+            activate_at_r = float(giveback_cfg.get("activate_at_r", 1.2) or 1.2)
+            max_giveback_pct = float(giveback_cfg.get("max_giveback_pct", 0.60) or 0.60)
+            if r_now >= activate_at_r:
+                if not activated_giveback:
+                    activated_giveback = True
+                    state_dirty = True
+                if r_now > peak_r:
+                    peak_r = r_now
+                    state_dirty = True
+            if activated_giveback and peak_r >= activate_at_r and peak_r > 0.0:
+                giveback = max(0.0, (peak_r - r_now) / peak_r)
+                if giveback >= max_giveback_pct:
+                    if self.mt5.close_position(ticket):
+                        logger.warning(
+                            "GIVEBACK_GUARD_CLOSE: ticket=%s symbol=%s side=%s peak_R=%.2f R_now=%.2f giveback=%.2f",
+                            ticket,
+                            symbol,
+                            side,
+                            peak_r,
+                            r_now,
+                            giveback,
+                        )
+                        if hasattr(self.memory, "update_exit_analysis"):
+                            try:
+                                self.memory.update_exit_analysis(
+                                    ticket=ticket,
+                                    tp_hit_reason="GIVEBACK_GUARD",
+                                    lessons="Position closed by giveback guard after peak R retrace.",
+                                )
+                            except Exception:
+                                pass
+                        result["closed"] = True
+                        state_dirty = True
+                        self._persist_trade_mgmt_state(
+                            trade_id=trade_id,
+                            tp1_done=tp1_done,
+                            tp2_done=tp2_done,
+                            initial_risk=initial_risk,
+                            original_volume=original_volume,
+                            peak_r=peak_r,
+                            activated_giveback=activated_giveback,
+                            opened_ts=opened_ts,
+                        )
+                        return result
+                    logger.warning(
+                        "GIVEBACK_GUARD_REJECTED: ticket=%s symbol=%s side=%s peak_R=%.2f R_now=%.2f",
+                        ticket,
+                        symbol,
+                        side,
+                        peak_r,
+                        r_now,
+                    )
+
+        if partials_enabled and trail_after_tp1 and not tp1_done:
+            result["skip_trailing"] = True
+
+        if state_dirty:
+            self._persist_trade_mgmt_state(
+                trade_id=trade_id,
+                tp1_done=tp1_done,
+                tp2_done=tp2_done,
+                initial_risk=initial_risk,
+                original_volume=original_volume,
+                peak_r=peak_r,
+                activated_giveback=activated_giveback,
+                opened_ts=opened_ts,
+            )
+
+        return result
+
+    def _cleanup_partial_retry_cache(self, positions: list, now_mono: float):
+        if not self._tm_partial_retry_after:
+            return
+        live_ids = {self._trade_id_from_position(p) for p in positions}
+        live_ids.discard("")
+        new_cache: dict[str, float] = {}
+        for key, ts in self._tm_partial_retry_after.items():
+            trade_id = str(key).split(":", 1)[0]
+            if trade_id in live_ids and float(ts or 0.0) > now_mono:
+                new_cache[key] = float(ts)
+        self._tm_partial_retry_after = new_cache
 
     def _sync_live_positions_to_memory(self, positions: Optional[list] = None):
         ensure_fn = getattr(self.memory, "ensure_open_trade_from_position", None)

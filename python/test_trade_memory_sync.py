@@ -112,6 +112,42 @@ class TestTradeMemorySync(unittest.TestCase):
         self.assertEqual(last["outcome"], "LOSS")
         self.assertAlmostEqual(float(last["pnl"]), -16.49, places=6)
 
+    def test_trade_management_state_persists_across_restart(self):
+        trade_id = "555001"
+        self.assertIsNone(self.db.get_trade_mgmt_state(trade_id))
+
+        saved = self.db.upsert_trade_mgmt_state(
+            trade_id=trade_id,
+            tp1_done=True,
+            tp2_done=False,
+            initial_risk=0.0042,
+            original_volume=0.30,
+            peak_r=1.74,
+            activated_giveback=True,
+            opened_ts="2026-03-05T08:30:00",
+        )
+        self.assertIsNotNone(saved)
+        self.assertTrue(saved["tp1_done"])
+        self.assertFalse(saved["tp2_done"])
+        self.assertAlmostEqual(float(saved["initial_risk"]), 0.0042, places=8)
+        self.assertAlmostEqual(float(saved["original_volume"]), 0.30, places=8)
+        self.assertAlmostEqual(float(saved["peak_r"]), 1.74, places=8)
+        self.assertTrue(saved["activated_giveback"])
+
+        self.db.close()
+        reopened = TradingMemoryDB(self.db_path)
+        try:
+            loaded = reopened.get_trade_mgmt_state(trade_id)
+            self.assertIsNotNone(loaded)
+            self.assertTrue(loaded["tp1_done"])
+            self.assertFalse(loaded["tp2_done"])
+            self.assertAlmostEqual(float(loaded["initial_risk"]), 0.0042, places=8)
+            self.assertAlmostEqual(float(loaded["original_volume"]), 0.30, places=8)
+            self.assertAlmostEqual(float(loaded["peak_r"]), 1.74, places=8)
+            self.assertTrue(loaded["activated_giveback"])
+        finally:
+            reopened.close()
+
 
 if __name__ == "__main__":
     unittest.main()

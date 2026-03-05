@@ -15,6 +15,7 @@ def load_config(path: Path) -> dict:
         config = json.load(f)
     _normalize_execution_gates(config)
     _normalize_trailing_structure(config)
+    _normalize_trade_management(config)
     _normalize_adaptive_learning(config)
     _validate(config)
     return config
@@ -187,6 +188,60 @@ def _normalize_adaptive_learning(config: dict):
     }
     for key, value in defaults.items():
         al.setdefault(key, value)
+
+def _normalize_trade_management(config: dict):
+    tm = config.get("trade_management", {})
+    if not isinstance(tm, dict):
+        tm = {}
+        config["trade_management"] = tm
+
+    partials = tm.get("partials", {})
+    if not isinstance(partials, dict):
+        partials = {}
+        tm["partials"] = partials
+
+    partial_defaults = {
+        "enabled": True,
+        "tp1_r": 1.0,
+        "tp1_close_pct": 0.60,
+        "tp1_sl_mode": "BE_PLUS",
+        "tp1_be_plus_r": 0.05,
+        "tp2_enabled": True,
+        "tp2_r": 2.0,
+        "tp2_close_pct": 0.25,
+        "tp2_sl_lock_r": 1.0,
+        "trail_only_after_tp1": True,
+    }
+    for key, value in partial_defaults.items():
+        partials.setdefault(key, value)
+
+    sl_mode = str(partials.get("tp1_sl_mode", "BE_PLUS")).upper().strip()
+    partials["tp1_sl_mode"] = sl_mode if sl_mode in ("BE", "BE_PLUS") else "BE_PLUS"
+
+    giveback = tm.get("giveback_guard", {})
+    if not isinstance(giveback, dict):
+        giveback = {}
+        tm["giveback_guard"] = giveback
+    giveback_defaults = {
+        "enabled": True,
+        "activate_at_r": 1.2,
+        "max_giveback_pct": 0.60,
+    }
+    for key, value in giveback_defaults.items():
+        giveback.setdefault(key, value)
+
+    time_exit = tm.get("time_exit", {})
+    if not isinstance(time_exit, dict):
+        time_exit = {}
+        tm["time_exit"] = time_exit
+    time_exit_defaults = {
+        "enabled": False,
+        "max_minutes_open": 90,
+    }
+    for key, value in time_exit_defaults.items():
+        time_exit.setdefault(key, value)
+
+    tm.setdefault("partial_retry_seconds", 60)
 
 def _validate(config: dict):
     """Basic sanity checks"""

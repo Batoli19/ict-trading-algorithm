@@ -1,22 +1,23 @@
 """
 MT5 Connector
-─────────────
+
 Handles all communication with MetaTrader 5:
-  • Connection management (auto-reconnect)
-  • Market data retrieval (OHLCV, tick, spread)
-  • Order placement / modification / closure
-  • Account info & position tracking
+   Connection management (auto-reconnect)
+   Market data retrieval (OHLCV, tick, spread)
+   Order placement / modification / closure
+   Account info & position tracking
 """
 
 import time
 import logging
+import math
 from datetime import datetime
 from typing import Optional
 import MetaTrader5 as mt5
 
 logger = logging.getLogger("MT5")
 
-# ─── Timeframe map ─────────────────────────────────────────────────────────────
+#  Timeframe map 
 TF_MAP = {
     "M1":  mt5.TIMEFRAME_M1,
     "M5":  mt5.TIMEFRAME_M5,
@@ -35,7 +36,7 @@ class MT5Connector:
         self._retry_max  = 5
         self._retry_wait = 3  # seconds
 
-    # ── Connection ─────────────────────────────────────────────────────────────
+    #  Connection 
     def connect(self) -> bool:
         for attempt in range(1, self._retry_max + 1):
             logger.info(f"Connecting to MT5 (attempt {attempt}/{self._retry_max})...")
@@ -46,7 +47,7 @@ class MT5Connector:
                 timeout  = self.cfg["timeout"],
             ):
                 info = mt5.account_info()
-                logger.info(f"✅  Connected | Account: {info.login} | "
+                logger.info(f"  Connected | Account: {info.login} | "
                             f"Balance: {info.balance:.2f} {info.currency} | "
                             f"Broker: {info.company}")
                 self.connected = True
@@ -56,7 +57,7 @@ class MT5Connector:
             logger.warning(f"Connection failed: {err}. Retrying in {self._retry_wait}s...")
             time.sleep(self._retry_wait)
 
-        logger.error("❌  Could not connect to MT5 after max retries.")
+        logger.error("  Could not connect to MT5 after max retries.")
         return False
 
     def disconnect(self):
@@ -66,11 +67,11 @@ class MT5Connector:
 
     def ensure_connected(self) -> bool:
         if not self.connected or not mt5.terminal_info():
-            logger.warning("MT5 disconnected — attempting reconnect...")
+            logger.warning("MT5 disconnected  attempting reconnect...")
             return self.connect()
         return True
 
-    # ── Account Info ───────────────────────────────────────────────────────────
+    #  Account Info 
     def get_account_info(self) -> dict:
         self.ensure_connected()
         info = mt5.account_info()
@@ -87,7 +88,7 @@ class MT5Connector:
             "currency": info.currency,
         }
 
-    # ── Market Data ────────────────────────────────────────────────────────────
+    #  Market Data 
     def get_candles(self, symbol: str, timeframe: str, count: int = 500) -> list:
         """Returns list of OHLCV dicts, newest last."""
         self.ensure_connected()
@@ -143,9 +144,12 @@ class MT5Connector:
             "point": float(getattr(info, "point", 0.0) or 0.0),
             "stops_level": int(getattr(info, "trade_stops_level", 0) or 0),
             "freeze_level": int(getattr(info, "trade_freeze_level", 0) or 0),
+            "volume_min": float(getattr(info, "volume_min", 0.0) or 0.0),
+            "volume_step": float(getattr(info, "volume_step", 0.0) or 0.0),
+            "volume_max": float(getattr(info, "volume_max", 0.0) or 0.0),
         }
 
-    # ── Orders ─────────────────────────────────────────────────────────────────
+    #  Orders 
     def place_market_order(self, symbol: str, order_type: str,
                            volume: float, sl: float, tp: float,
                            comment: str = "ICT_BOT") -> Optional[dict]:
@@ -180,13 +184,13 @@ class MT5Connector:
         result = mt5.order_send(request)
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             err = mt5.last_error() if result is None else f"Code {result.retcode}: {result.comment}"
-            logger.error(f"❌  Order failed on {symbol}: {err}")
+            logger.error(f"  Order failed on {symbol}: {err}")
             return None
 
         ticket = result.order
         deal_ticket = getattr(result, "deal", None)
         position_id = getattr(result, "position", None) or ticket
-        logger.info(f"✅  ORDER PLACED | {order_type} {volume} {symbol} | "
+        logger.info(f"  ORDER PLACED | {order_type} {volume} {symbol} | "
                     f"Price: {result.price} | Ticket: {ticket} | Deal: {deal_ticket} | Position: {position_id}")
         
         # Now add SL/TP via modify
@@ -194,9 +198,9 @@ class MT5Connector:
             time.sleep(0.5)  # Brief pause before modify
             modify_result = self.modify_sl_tp(ticket, sl, tp)
             if modify_result:
-                logger.info(f"✅  SL/TP added | SL: {sl} | TP: {tp}")
+                logger.info(f"  SL/TP added | SL: {sl} | TP: {tp}")
             else:
-                logger.warning(f"⚠️  Trade opened but SL/TP failed to set")
+                logger.warning(f"  Trade opened but SL/TP failed to set")
         
         return {
             "ticket":  ticket,
@@ -328,13 +332,94 @@ class MT5Connector:
         logger.warning(f"Failed cancel pending order ticket={ticket} err={result.comment if result else 'None'}")
         return False
 
+    def _position_by_ticket(self, ticket: int):
+        positions = mt5.positions_get()
+        if not positions:
+            return None
+        for pos in positions:
+            if int(getattr(pos, "ticket", 0) or 0) == int(ticket):
+                return pos
+        return None
+
+    def _volume_precision(self, step: float) -> int:
+        step_text = f"{float(step):.8f}".rstrip("0")
+        if "." not in step_text:
+            return 0
+        return len(step_text.split(".", 1)[1])
+
+    def _round_volume_down(self, volume: float, step: float) -> float:
+        if step <= 0:
+            return max(0.0, float(volume))
+        units = math.floor((float(volume) / step) + 1e-9)
+        return max(0.0, units * step)
+
+    def _resolve_partial_volume(self, symbol: str, requested_volume: float, position_volume: float) -> dict:
+        info = self.get_symbol_info(symbol) or {}
+        min_lot = float(info.get("volume_min", 0.01) or 0.01)
+        step = float(info.get("volume_step", min_lot) or min_lot)
+        max_lot = float(info.get("volume_max", 0.0) or 0.0)
+
+        req = max(0.0, float(requested_volume or 0.0))
+        pos_vol = max(0.0, float(position_volume or 0.0))
+        if req <= 0.0:
+            return {"ok": False, "reason": "REQUESTED_VOLUME_NON_POSITIVE", "volume": 0.0}
+        if pos_vol <= 0.0:
+            return {"ok": False, "reason": "POSITION_VOLUME_NON_POSITIVE", "volume": 0.0}
+
+        target = min(req, pos_vol)
+        if max_lot > 0:
+            target = min(target, max_lot)
+
+        close_volume = self._round_volume_down(target, step)
+        precision = max(2, self._volume_precision(step))
+        close_volume = round(close_volume, precision)
+
+        if close_volume < min_lot:
+            return {
+                "ok": False,
+                "reason": "VOLUME_BELOW_MIN_LOT",
+                "volume": close_volume,
+                "min_lot": min_lot,
+                "step": step,
+            }
+
+        remaining = max(0.0, pos_vol - close_volume)
+        if remaining > 0.0 and remaining < min_lot:
+            adjusted = self._round_volume_down(max(0.0, pos_vol - min_lot), step)
+            adjusted = round(adjusted, precision)
+            if adjusted >= min_lot and adjusted < pos_vol:
+                close_volume = adjusted
+                remaining = max(0.0, pos_vol - close_volume)
+            else:
+                return {
+                    "ok": False,
+                    "reason": "REMAINDER_BELOW_MIN_LOT",
+                    "volume": close_volume,
+                    "remaining": remaining,
+                    "min_lot": min_lot,
+                    "step": step,
+                }
+
+        if close_volume >= (pos_vol - (step * 0.5)):
+            return {
+                "ok": False,
+                "reason": "PARTIAL_EQUALS_FULL_POSITION",
+                "volume": close_volume,
+                "position_volume": pos_vol,
+                "step": step,
+            }
+
+        return {
+            "ok": True,
+            "volume": close_volume,
+            "remaining": remaining,
+            "min_lot": min_lot,
+            "step": step,
+        }
+
     def close_position(self, ticket: int) -> bool:
         self.ensure_connected()
-        position = None
-        for pos in mt5.positions_get():
-            if pos.ticket == ticket:
-                position = pos
-                break
+        position = self._position_by_ticket(ticket)
 
         if position is None:
             logger.warning(f"Position {ticket} not found.")
@@ -359,11 +444,77 @@ class MT5Connector:
 
         result = mt5.order_send(request)
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-            logger.info(f"✅  CLOSED position {ticket} on {position.symbol}")
+            logger.info(f"  CLOSED position {ticket} on {position.symbol}")
             return True
 
-        logger.error(f"❌  Failed to close {ticket}: {result.comment if result else 'None'}")
+        logger.error(f"  Failed to close {ticket}: {result.comment if result else 'None'}")
         return False
+
+    def partial_close_position(self, ticket: int, volume: float) -> dict:
+        self.ensure_connected()
+        position = self._position_by_ticket(ticket)
+        if position is None:
+            return {"ok": False, "retcode": None, "comment": "POSITION_NOT_FOUND", "closed_volume": 0.0}
+
+        requested_volume = float(volume or 0.0)
+        volume_check = self._resolve_partial_volume(
+            symbol=str(position.symbol),
+            requested_volume=requested_volume,
+            position_volume=float(position.volume),
+        )
+        if not bool(volume_check.get("ok", False)):
+            return {
+                "ok": False,
+                "retcode": None,
+                "comment": str(volume_check.get("reason", "VOLUME_REJECTED")),
+                "closed_volume": 0.0,
+                "details": volume_check,
+            }
+
+        close_volume = float(volume_check.get("volume", 0.0) or 0.0)
+        if close_volume <= 0.0:
+            return {"ok": False, "retcode": None, "comment": "INVALID_CLOSE_VOLUME", "closed_volume": 0.0}
+
+        order_type = mt5.ORDER_TYPE_SELL if position.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        tick = self.get_tick(position.symbol)
+        if not tick:
+            return {"ok": False, "retcode": None, "comment": "NO_TICK", "closed_volume": 0.0}
+        price = tick["bid"] if order_type == mt5.ORDER_TYPE_SELL else tick["ask"]
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": position.symbol,
+            "volume": close_volume,
+            "type": order_type,
+            "position": int(ticket),
+            "price": float(price),
+            "deviation": 50,
+            "magic": 20250101,
+            "comment": "ICT_BOT_PARTIAL",
+            "type_time": mt5.ORDER_TIME_GTC,
+        }
+
+        result = mt5.order_send(request)
+        if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+            return {
+                "ok": True,
+                "retcode": int(result.retcode),
+                "comment": str(getattr(result, "comment", "") or ""),
+                "closed_volume": close_volume,
+                "order": getattr(result, "order", None),
+                "deal": getattr(result, "deal", None),
+            }
+
+        err = mt5.last_error()
+        return {
+            "ok": False,
+            "retcode": int(getattr(result, "retcode", 0) or 0) if result is not None else None,
+            "comment": str(getattr(result, "comment", "") or ""),
+            "last_error": str(err),
+            "closed_volume": 0.0,
+            "requested_volume": requested_volume,
+            "accepted_volume": close_volume,
+        }
 
     def modify_sl_tp_detailed(self, ticket: int, sl: float, tp: float) -> dict:
         self.ensure_connected()
@@ -390,7 +541,15 @@ class MT5Connector:
     def modify_sl_tp(self, ticket: int, sl: float, tp: float) -> bool:
         return bool(self.modify_sl_tp_detailed(ticket, sl, tp).get("ok", False))
 
-    # ── Positions ──────────────────────────────────────────────────────────────
+    def modify_position_sl(self, ticket: int, new_sl: float) -> dict:
+        self.ensure_connected()
+        position = self._position_by_ticket(ticket)
+        if position is None:
+            return {"ok": False, "retcode": None, "comment": "POSITION_NOT_FOUND", "last_error": ""}
+        tp = float(getattr(position, "tp", 0.0) or 0.0)
+        return self.modify_sl_tp_detailed(int(ticket), float(new_sl), tp)
+
+    #  Positions 
     def get_open_positions(self) -> list:
         self.ensure_connected()
         positions = mt5.positions_get()
@@ -481,3 +640,5 @@ class MT5Connector:
                 "comment": comment,
             })
         return out
+
+

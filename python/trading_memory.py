@@ -230,6 +230,21 @@ class TradingMemoryDB:
         )
         """
         )
+
+        cursor.execute(
+            """
+        CREATE TABLE IF NOT EXISTS trade_management_state (
+            trade_id TEXT PRIMARY KEY,
+            tp1_done INTEGER DEFAULT 0,
+            tp2_done INTEGER DEFAULT 0,
+            initial_risk REAL DEFAULT 0.0,
+            original_volume REAL DEFAULT 0.0,
+            peak_r REAL DEFAULT 0.0,
+            activated_giveback INTEGER DEFAULT 0,
+            opened_ts TEXT
+        )
+        """
+        )
         
         self.conn.commit()
         self._ensure_columns()
@@ -307,6 +322,32 @@ class TradingMemoryDB:
                 "notes": "TEXT",
             },
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trade_management_state (
+                trade_id TEXT PRIMARY KEY,
+                tp1_done INTEGER DEFAULT 0,
+                tp2_done INTEGER DEFAULT 0,
+                initial_risk REAL DEFAULT 0.0,
+                original_volume REAL DEFAULT 0.0,
+                peak_r REAL DEFAULT 0.0,
+                activated_giveback INTEGER DEFAULT 0,
+                opened_ts TEXT
+            )
+            """
+        )
+        self._ensure_table_columns(
+            "trade_management_state",
+            {
+                "tp1_done": "INTEGER DEFAULT 0",
+                "tp2_done": "INTEGER DEFAULT 0",
+                "initial_risk": "REAL DEFAULT 0.0",
+                "original_volume": "REAL DEFAULT 0.0",
+                "peak_r": "REAL DEFAULT 0.0",
+                "activated_giveback": "INTEGER DEFAULT 0",
+                "opened_ts": "TEXT",
+            },
+        )
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_position_id ON trades(position_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_order_ticket ON trades(order_ticket)")
@@ -315,6 +356,7 @@ class TradingMemoryDB:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_lessons_symbol_time ON learned_lessons(symbol, created_at_utc)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_rules_status_setup ON adaptive_rules(status, affected_setup)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_rule_events_rule_time ON rule_events(rule_id, event_time_utc)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trade_mgmt_opened_ts ON trade_management_state(opened_ts)")
         self.conn.commit()
 
     def _ensure_table_columns(self, table_name: str, columns_with_types: Dict[str, str]):
@@ -1470,6 +1512,108 @@ class TradingMemoryDB:
         cursor.execute("SELECT COUNT(*) FROM rule_events WHERE rule_id = ?", (int(rule_id),))
         row = cursor.fetchone()
         return int(row[0] or 0) if row else 0
+
+    def get_trade_mgmt_state(self, trade_id: str) -> Optional[Dict]:
+        trade_key = str(trade_id or "").strip()
+        if not trade_key:
+            return None
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT trade_id, tp1_done, tp2_done, initial_risk, original_volume,
+                   peak_r, activated_giveback, opened_ts
+            FROM trade_management_state
+            WHERE trade_id = ?
+            LIMIT 1
+            """,
+            (trade_key,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "trade_id": str(row[0]),
+            "tp1_done": bool(int(row[1] or 0)),
+            "tp2_done": bool(int(row[2] or 0)),
+            "initial_risk": float(row[3] or 0.0),
+            "original_volume": float(row[4] or 0.0),
+            "peak_r": float(row[5] or 0.0),
+            "activated_giveback": bool(int(row[6] or 0)),
+            "opened_ts": str(row[7] or ""),
+        }
+
+    def upsert_trade_mgmt_state(
+        self,
+        trade_id: str,
+        tp1_done: Optional[bool] = None,
+        tp2_done: Optional[bool] = None,
+        initial_risk: Optional[float] = None,
+        original_volume: Optional[float] = None,
+        peak_r: Optional[float] = None,
+        activated_giveback: Optional[bool] = None,
+        opened_ts: Optional[str] = None,
+    ) -> Optional[Dict]:
+        trade_key = str(trade_id or "").strip()
+        if not trade_key:
+            return None
+
+        existing = self.get_trade_mgmt_state(trade_key) or {
+            "trade_id": trade_key,
+            "tp1_done": False,
+            "tp2_done": False,
+            "initial_risk": 0.0,
+            "original_volume": 0.0,
+            "peak_r": 0.0,
+            "activated_giveback": False,
+            "opened_ts": "",
+        }
+
+        if tp1_done is not None:
+            existing["tp1_done"] = bool(tp1_done)
+        if tp2_done is not None:
+            existing["tp2_done"] = bool(tp2_done)
+        if initial_risk is not None:
+            existing["initial_risk"] = float(initial_risk)
+        if original_volume is not None:
+            existing["original_volume"] = float(original_volume)
+        if peak_r is not None:
+            existing["peak_r"] = float(peak_r)
+        if activated_giveback is not None:
+            existing["activated_giveback"] = bool(activated_giveback)
+        if opened_ts is not None:
+            existing["opened_ts"] = str(opened_ts)
+        if not str(existing.get("opened_ts") or "").strip():
+            existing["opened_ts"] = datetime.utcnow().isoformat()
+
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO trade_management_state (
+                trade_id, tp1_done, tp2_done, initial_risk, original_volume,
+                peak_r, activated_giveback, opened_ts
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_id) DO UPDATE SET
+                tp1_done = excluded.tp1_done,
+                tp2_done = excluded.tp2_done,
+                initial_risk = excluded.initial_risk,
+                original_volume = excluded.original_volume,
+                peak_r = excluded.peak_r,
+                activated_giveback = excluded.activated_giveback,
+                opened_ts = excluded.opened_ts
+            """,
+            (
+                trade_key,
+                int(existing["tp1_done"]),
+                int(existing["tp2_done"]),
+                float(existing["initial_risk"]),
+                float(existing["original_volume"]),
+                float(existing["peak_r"]),
+                int(existing["activated_giveback"]),
+                str(existing["opened_ts"] or ""),
+            ),
+        )
+        self.conn.commit()
+        return self.get_trade_mgmt_state(trade_key)
 
     def get_adaptive_learning_stats(self) -> Dict:
         cursor = self.conn.cursor()
