@@ -24,7 +24,7 @@ Data source: TradingMemoryDB (SQLite) — all analysis reads from trade history.
 
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("BRAIN")
 
@@ -347,7 +347,7 @@ class TradingBrain:
             report.append("")
         
         report.append("=" * 60)
-        report.append(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        report.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
         report.append("=" * 60)
         
         return "\n".join(report)

@@ -21,7 +21,7 @@ The can_trade() method is called before every entry to check all conditions.
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger("RISK")
@@ -57,7 +57,7 @@ class RiskManager:
         self.corr_cfg = config.get("correlation", {}) if isinstance(config.get("correlation", {}), dict) else {}
         self.journal: list[TradeRecord] = []
 
-        self._today: date = datetime.utcnow().date()
+        self._today: date = datetime.now(timezone.utc).date()
         self._daily_pnl: float = 0.0
         self._daily_trades: int = 0
         self._processed_closes_today: set[int] = set()
@@ -106,7 +106,7 @@ class RiskManager:
         }
 
     def _check_reset(self):
-        today = datetime.utcnow().date()
+        today = datetime.now(timezone.utc).date()
         if today != self._today:
             logger.info(
                 f"New day {today} resetting daily counters. Yesterday P&L: {self._daily_pnl:+.2f}"
@@ -144,7 +144,7 @@ class RiskManager:
             self._total_open_risk_estimate_pct = 0.0
 
     def _now(self) -> datetime:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
     def _prune(self, events: list[datetime], max_age_seconds: int, now: Optional[datetime] = None):
         ref = now or self._now()

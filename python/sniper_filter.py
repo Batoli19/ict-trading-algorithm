@@ -382,38 +382,7 @@ class SniperFilter:
             return pos >= 0.75
         return False
 
-    def _find_fvg_midpoint(self, candles: List[dict], direction: str) -> Optional[float]:
-        if len(candles) < 6:
-            return None
-        for i in range(len(candles) - 1, 1, -1):
-            c0, c2 = candles[i - 2], candles[i]
-            if direction == "BUY":
-                top = self._num(c2.get("low"))
-                bottom = self._num(c0.get("high"))
-                if top > bottom:
-                    return (top + bottom) / 2.0
-            elif direction == "SELL":
-                top = self._num(c0.get("low"))
-                bottom = self._num(c2.get("high"))
-                if top > bottom:
-                    return (top + bottom) / 2.0
-        return None
 
-    def _find_ob_midpoint(self, candles: List[dict], direction: str) -> Optional[float]:
-        if len(candles) < 8:
-            return None
-        for i in range(len(candles) - 3, 1, -1):
-            c = candles[i]
-            nxt = candles[i + 1]
-            o = self._num(c.get("open"))
-            cl = self._num(c.get("close"))
-            h = self._num(c.get("high"))
-            l = self._num(c.get("low"))
-            if direction == "BUY" and cl < o and self._num(nxt.get("close")) > h:
-                return (h + l) / 2.0
-            if direction == "SELL" and cl > o and self._num(nxt.get("close")) < l:
-                return (h + l) / 2.0
-        return None
 
     def _entry_distance_limit_pips(self, symbol: str) -> float:
         cfg = self.cfg.get("entry_distance_limit", {})
@@ -515,6 +484,27 @@ class SniperFilter:
         _, _, _, direction, setup = self._signal_fields(signal)
         metrics.setup_type = setup
 
+        if setup in ("FVG", "ORDER_BLOCK"):
+            metrics.entry_mode = "LIMIT"
+            limit_mid = getattr(signal, "zone_midpoint", None)
+            if limit_mid is not None:
+                original_entry = self._num(getattr(signal, "entry", 0.0))
+                original_sl = self._num(getattr(signal, "sl", 0.0))
+                original_tp = self._num(getattr(signal, "tp", 0.0))
+                original_risk = abs(original_entry - original_sl)
+                original_rr = abs(original_tp - original_entry) / original_risk if original_risk > 0 else 2.0
+                
+                signal.entry = limit_mid
+                setattr(signal, "trigger_price", c5[-1].get("close") if c5 else limit_mid)
+                metrics.entry_price = limit_mid
+                new_risk = abs(limit_mid - original_sl)
+                if direction == "BUY":
+                    signal.tp = limit_mid + (new_risk * original_rr)
+                else:
+                    signal.tp = limit_mid - (new_risk * original_rr)
+            else:
+                metrics.entry_mode = "CONFIRMATION"
+
         metrics.sl_pips = self.compute_sl_pips(signal, sym)
         metrics.rr = self.compute_rr(signal)
         metrics.confidence = self._num(getattr(signal, "confidence", 0.0), 0.0)
@@ -609,19 +599,7 @@ class SniperFilter:
         if max_entry_dist <= 0:
             max_entry_dist = self._num(cfg.get("max_entry_distance_pips", 0.0), 0.0)
 
-        limit_mid = None
-        if setup in ("FVG", "ORDER_BLOCK"):
-            metrics.entry_mode = "LIMIT"
-            if setup == "FVG":
-                limit_mid = self._find_fvg_midpoint(c15[-60:] if len(c15) > 60 else c15, direction)
-            else:
-                limit_mid = self._find_ob_midpoint(c15[-60:] if len(c15) > 60 else c15, direction)
-            if limit_mid is not None:
-                signal.entry = limit_mid
-                setattr(signal, "trigger_price", c5[-1].get("close") if c5 else limit_mid)
-                metrics.entry_price = limit_mid
-            else:
-                metrics.entry_mode = "CONFIRMATION"
+
 
         dist = self.compute_entry_distance(signal, sym, c5)
         metrics.entry_distance_pips = self._num(dist, 0.0) if dist is not None else 0.0
@@ -727,10 +705,12 @@ class SniperFilter:
             if bool(htf_ctrl.get("reduce_risk_on_conflict", False)):
                 metrics.risk_scale *= 0.5
 
-        if bool(cfg.get("enforce_killzones", False)) and not in_killzone:
+        ict_kz_cfg = self.cfg.get("ict", {}).get("kill_zones", {})
+        trade_only_kz = bool(ict_kz_cfg.get("trade_only_in_kill_zones", False))
+        if trade_only_kz and not in_killzone:
             metrics.skip_reason = "KILLZONE_LIMIT"
             return False, "KILLZONE_LIMIT", metrics
-        if bool(cfg.get("enforce_killzones", False)):
+        if trade_only_kz:
             allowed_kz = self.hybrid_cfg.get("allowed_kill_zones", ["LONDON_OPEN", "NY_OPEN", "LONDON_CLOSE"])
             allowed_set = {str(x).upper() for x in allowed_kz}
             if allowed_set and str(killzone or "NONE").upper() not in allowed_set:

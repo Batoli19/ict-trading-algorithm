@@ -33,7 +33,7 @@ Configuration (settings.json → "risk"):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 
@@ -121,7 +121,7 @@ class CooldownManager:
 
     def _now(self) -> datetime:
         """Get current UTC time. Extracted for testability."""
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
     def can_enter(self, symbol: str) -> tuple[bool, str]:
         """

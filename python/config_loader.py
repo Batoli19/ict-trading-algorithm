@@ -105,7 +105,7 @@ def _normalize_execution_gates(config: dict):
         execution.setdefault(key, default_value)
 
     # ─── Migrate old "displacement" section ───────────────────────────
-    displacement = config.get("displacement", {})
+    displacement = config.get("displacement")
     if isinstance(displacement, dict):
         if "atr_multiplier" in displacement and "min_displacement_atr_mult" not in execution:
             execution["min_displacement_atr_mult"] = displacement.get("atr_multiplier")
@@ -117,7 +117,7 @@ def _normalize_execution_gates(config: dict):
 
     # ─── Migrate old "chop_filter" section ────────────────────────────
     # Chop filter detects ranging/sideways markets where ICT signals are unreliable
-    chop_filter = config.get("chop_filter", {})
+    chop_filter = config.get("chop_filter")
     if isinstance(chop_filter, dict):
         mapping = {
             "enabled": "avoid_chop",                           # Master toggle
@@ -140,7 +140,7 @@ def _normalize_execution_gates(config: dict):
 
     # ─── Migrate old "reversal_gate" section ──────────────────────────
     # Reversal gate requires specific conditions for reversal trades
-    reversal_gate = config.get("reversal_gate", {})
+    reversal_gate = config.get("reversal_gate")
     if isinstance(reversal_gate, dict):
         mapping = {
             "require_sweep": "reversal_gate_require_sweep",          # Must see liquidity sweep

@@ -4,8 +4,15 @@ config/settings.json
 
 # Runtime DBs
 memory/*.db
+memory/*.db-wal
+memory/*.db-shm
 memory/*.sqlite
+memory/*.sqlite-wal
+memory/*.sqlite-shm
 memory/*.sqlite3
+memory/*.sqlite3-wal
+memory/*.sqlite3-shm
+memory/*journal
 
 # Local artifacts
 python.zip

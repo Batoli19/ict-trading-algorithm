@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -143,7 +143,7 @@ class TestAdaptiveLearningPhase1(unittest.TestCase):
             "deal_ticket": 7777,
             "price": 1.1010,
             "profit": -25.0,
-            "time": datetime.utcnow().isoformat(),
+            "time": datetime.now(timezone.utc).isoformat(),
         }
         db_record = {
             "id": 1,

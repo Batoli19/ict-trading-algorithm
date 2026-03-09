@@ -37,7 +37,7 @@ Configuration (settings.json → "hybrid"):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
 
@@ -101,7 +101,7 @@ class HybridGate:
             setup_type: Which ICT setup was used (e.g. "FVG", "STOP_HUNT")
         """
         hcfg = self.cfg.get("hybrid", {})
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Get configured cooldown durations (in seconds)
         cd_close = int(hcfg.get("cooldown_after_close_seconds", 0))  # Any close
@@ -133,7 +133,7 @@ class HybridGate:
         until = self._cooldown_until_by_symbol.get(symbol)
         if not until:
             return False, ""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if now < until:
             return True, f"COOLDOWN_ACTIVE until={until.isoformat()}"
         return False, ""

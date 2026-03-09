@@ -29,7 +29,7 @@ Configuration (settings.json → "news"):
 import logging
 import asyncio
 import aiohttp
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dataclasses import dataclass
 
@@ -92,7 +92,7 @@ class NewsFilter:
             return
 
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # Don't re-fetch if we updated less than 1 hour ago
             if (self.last_update and
@@ -140,7 +140,7 @@ class NewsFilter:
                         return []
                     data = await resp.json()
 
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).date()
 
             for item in data:
                 # Parse the event time from ISO format
@@ -189,7 +189,7 @@ class NewsFilter:
 
         Args:
             symbol: Trading instrument (e.g. "EURUSD")
-            now:    Current UTC time (default: datetime.utcnow())
+            now:    Current UTC time (default: datetime.now(timezone.utc))
 
         Returns:
             Tuple of (is_blocked: bool, reason: str).
@@ -199,7 +199,7 @@ class NewsFilter:
             return False, ""
 
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
         # Get the configured blackout windows
         before = timedelta(minutes=self.cfg.get("avoid_minutes_before", 30))
@@ -246,7 +246,7 @@ class NewsFilter:
         Returns:
             List of NewsEvent objects within the window.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff = now + timedelta(hours=hours_ahead)
         return [e for e in self.events if now <= e.time <= cutoff]
 

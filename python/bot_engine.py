@@ -28,7 +28,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, timezone
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -119,7 +119,7 @@ class TradingEngine:
         self._last_decisions: deque[dict] = deque(maxlen=20)
         self.analyzer_running = False
         self.analyzer_last_tick = None
-        self.started_at_utc = datetime.utcnow()
+        self.started_at_utc = datetime.now(timezone.utc)
         self._pending_cancel_reasons: deque[dict] = deque(maxlen=20)
         self._daily_loss_flatten_last_at: Optional[datetime] = None
         self._adaptive_last_validate_at: Optional[datetime] = None
@@ -139,7 +139,7 @@ class TradingEngine:
         return True
 
     async def run(self):
-        self.started_at_utc = datetime.utcnow()
+        self.started_at_utc = datetime.now(timezone.utc)
         if not await self._startup():
             self.shutdown.set()
             return
@@ -161,6 +161,28 @@ class TradingEngine:
         manage_task.cancel()
         news_task.cancel()
         analyzer_task.cancel()
+
+        self._cleanup_resources()
+
+    def _cleanup_resources(self):
+        logger.info("ENGINE_SHUTDOWN: closing resources...")
+        try:
+            if hasattr(self.mt5, "disconnect"):
+                self.mt5.disconnect()
+        except Exception as e:
+            logger.error(f"MT5 disconnect error: {e}")
+
+        try:
+            if hasattr(self.memory, "close"):
+                self.memory.close()
+        except Exception as e:
+            logger.error(f"Memory DB close error: {e}")
+
+        try:
+            if getattr(self, "shared_learning", None) and hasattr(self.shared_learning, "close"):
+                self.shared_learning.close()
+        except Exception as e:
+            logger.error(f"Shared Learning DB close error: {e}")
 
     async def _scan_loop(self):
         while not self.shutdown.is_set():
@@ -190,7 +212,7 @@ class TradingEngine:
         if not isinstance(al_cfg, dict) or not bool(al_cfg.get("enabled", False)):
             return
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         interval = int(al_cfg.get("validation_interval_seconds", 3600) or 3600)
         if self._adaptive_last_validate_at is not None:
             elapsed = (now - self._adaptive_last_validate_at).total_seconds()
@@ -313,7 +335,7 @@ class TradingEngine:
 
         last = self._last_signals.get(symbol)
         if last:
-            elapsed = (datetime.utcnow() - last).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - last).total_seconds()
             if elapsed < self._signal_cooldown:
                 remaining = max(0, int(self._signal_cooldown - elapsed))
                 logger.info(f"SKIP_ENTRY_SIGNAL_COOLDOWN: symbol={symbol} remaining={remaining}")
@@ -346,26 +368,26 @@ class TradingEngine:
                     paper_trade_only = True
                 else:
                     self._skip_reasons.append(
-                        {"ts": datetime.utcnow().isoformat(), "symbol": symbol, "reason": "DAILY_PROFIT_LOCK"}
+                        {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol, "reason": "DAILY_PROFIT_LOCK"}
                     )
                     return False
             elif reason_text.startswith("LOSS_STREAK_PAUSE"):
                 rem = self.risk.get_guardrail_status().get("loss_pause_remaining_seconds", 0)
                 logger.warning(f"SKIP_PROP_LOSS_STREAK_PAUSE: symbol={symbol} remaining={rem}")
                 self._skip_reasons.append(
-                    {"ts": datetime.utcnow().isoformat(), "symbol": symbol, "reason": "LOSS_STREAK_PAUSE", "remaining": rem}
+                    {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol, "reason": "LOSS_STREAK_PAUSE", "remaining": rem}
                 )
                 return False
             elif reason_text.startswith("LOSS_STREAK_STOP_DAY"):
                 logger.warning(f"SKIP_PROP_LOSS_STREAK_STOP_DAY: symbol={symbol} reason={reason_text}")
                 self._skip_reasons.append(
-                    {"ts": datetime.utcnow().isoformat(), "symbol": symbol, "reason": "LOSS_STREAK_STOP_DAY"}
+                    {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol, "reason": "LOSS_STREAK_STOP_DAY"}
                 )
                 return False
             elif reason_text.startswith("MAX_TOTAL_OPEN_RISK"):
                 logger.warning(f"SKIP_PROP_MAX_TOTAL_OPEN_RISK: {reason_text}")
                 self._skip_reasons.append(
-                    {"ts": datetime.utcnow().isoformat(), "symbol": symbol, "reason": "MAX_TOTAL_OPEN_RISK", "detail": reason_text}
+                    {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol, "reason": "MAX_TOTAL_OPEN_RISK", "detail": reason_text}
                 )
                 return False
             elif reason_text.startswith("DAILY_LOSS_LIMIT") or reason_text.startswith("MAX_DAILY_LOSS"):
@@ -373,7 +395,7 @@ class TradingEngine:
                 if reason_text.startswith("MAX_DAILY_LOSS_EQUITY"):
                     await self._handle_prop_daily_loss_breach(reason_text, open_positions=open_positions)
                 self._skip_reasons.append(
-                    {"ts": datetime.utcnow().isoformat(), "symbol": symbol, "reason": "MAX_DAILY_LOSS", "detail": reason_text}
+                    {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol, "reason": "MAX_DAILY_LOSS", "detail": reason_text}
                 )
                 return False
             elif "COOLDOWN" in reason_text.upper():
@@ -395,7 +417,9 @@ class TradingEngine:
             logger.warning(f"Incomplete data for {symbol} - skipping")
             return False
 
-        signal = self.strategy.analyze(symbol, candles_h4, candles_m15, candles_m5, candles_m1, spread)
+        signal = self.strategy.analyze(
+            symbol, candles_h4, candles_m15, candles_m5, candles_m1, spread, self.brain.get_adaptive_confidence
+        )
 
         if signal and signal.valid:
             setup_name = str(getattr(signal.setup_type, "value", signal.setup_type))
@@ -412,7 +436,7 @@ class TradingEngine:
                 logger.info(log_msg)
                 self._skip_reasons.append(
                     {
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
                         "symbol": symbol,
                         "setup_type": setup_name,
                         "reason": reason,
@@ -446,7 +470,7 @@ class TradingEngine:
                 )
                 self._last_decisions.append(
                     {
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
                         "symbol": symbol,
                         "setup_type": setup_name,
                         "decision": "ALLOW",
@@ -467,7 +491,7 @@ class TradingEngine:
                 )
                 self._last_decisions.append(
                     {
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
                         "symbol": symbol,
                         "setup_type": setup_name,
                         "decision": "ALLOW",
@@ -565,7 +589,7 @@ class TradingEngine:
                 )
                 self._last_decisions.append(
                     {
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
                         "symbol": symbol,
                         "setup_type": setup_name,
                         "decision": "PAPER_ONLY",
@@ -617,7 +641,7 @@ class TradingEngine:
         tick = self.mt5.get_tick(symbol)
         if not tick:
             return
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         max_age_min = int(self.cfg.get("execution", {}).get("pending_max_age_minutes", 90))
         dist_limit = float(self.cfg.get("entry_distance_limit", {}).get(symbol, 0.0) or 0.0)
         pip = self.strategy.get_pip_size(symbol)
@@ -643,7 +667,7 @@ class TradingEngine:
                     )
                     self._pending_cancel_reasons.append(
                         {
-                            "ts": datetime.utcnow().isoformat(),
+                            "ts": datetime.now(timezone.utc).isoformat(),
                             "symbol": symbol,
                             "ticket": ticket,
                             "reason": f"PENDING_{reason}",
@@ -664,13 +688,9 @@ class TradingEngine:
         setup_id: str = "",
         risk_scale_override: Optional[float] = None,
     ):
-        adaptive_confidence = self.brain.get_adaptive_confidence(signal.setup_type.value)
-        original_confidence = signal.confidence
-        signal.confidence = adaptive_confidence / 100
-
         logger.info(
             f"Executing signal: {signal.symbol} {signal.direction.value} | {signal.setup_type.value} "
-            f"| Conf: {original_confidence:.0%}->{signal.confidence:.0%} (learned)"
+            f"| Conf: {signal.confidence:.0%} (learned)"
         )
 
         analysis = self.brain.analyze_entry_conditions(
@@ -710,7 +730,8 @@ class TradingEngine:
 
         if self._is_hybrid_mode():
             hcfg = self.cfg.get("hybrid", {})
-            if hcfg.get("trade_only_in_kill_zones", False):
+            ict_kz_cfg = self.cfg.get("ict", {}).get("kill_zones", {})
+            if ict_kz_cfg.get("trade_only_in_kill_zones", False):
                 if not in_kill_zone:
                     logger.info(f"HYBRID_SKIP: not in kill zone for {signal.symbol}")
                     return
@@ -849,7 +870,7 @@ class TradingEngine:
             )
             self._skip_reasons.append(
                 {
-                    "ts": datetime.utcnow().isoformat(),
+                    "ts": datetime.now(timezone.utc).isoformat(),
                     "symbol": signal.symbol,
                     "setup_type": signal.setup_type.value,
                     "reason": "ADAPTIVE_BLOCK",
@@ -927,7 +948,7 @@ class TradingEngine:
                 setup_id=setup_id,
                 reason=signal.reason,
             )
-            self._last_signals[signal.symbol] = datetime.utcnow()
+            self._last_signals[signal.symbol] = datetime.now(timezone.utc)
 
             htf_bias = self.strategy.get_htf_bias(candles_h4).value
             setup_class = "REVERSAL" if bool(getattr(sniper_metrics, "is_reversal", False)) else "CONTINUATION"
@@ -963,7 +984,7 @@ class TradingEngine:
                 confidence_input=signal.confidence,
                 setup_class=setup_class,
                 validity_tags=validity_tags,
-                entry_time=datetime.utcnow(),
+                entry_time=datetime.now(timezone.utc),
             )
 
             self.memory.record_entry(trade_memory)
@@ -1502,14 +1523,14 @@ class TradingEngine:
             if isinstance(open_time, datetime):
                 opened_ts = open_time.isoformat()
             else:
-                opened_ts = datetime.utcnow().isoformat()
+                opened_ts = datetime.now(timezone.utc).isoformat()
 
         # Optional time-based full close independent of R logic.
         if time_exit_enabled:
             max_minutes_open = max(1, int(time_exit_cfg.get("max_minutes_open", 90) or 90))
             open_time = position.get("open_time")
             if isinstance(open_time, datetime):
-                open_minutes = (datetime.utcnow() - open_time).total_seconds() / 60.0
+                open_minutes = (datetime.now(timezone.utc) - open_time).total_seconds() / 60.0
                 if open_minutes >= float(max_minutes_open):
                     if self.mt5.close_position(ticket):
                         logger.warning(
@@ -1970,7 +1991,7 @@ class TradingEngine:
             )
 
     async def _handle_prop_daily_loss_breach(self, reason: str, open_positions: Optional[list] = None):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if self._daily_loss_flatten_last_at and (now - self._daily_loss_flatten_last_at).total_seconds() < 15:
             return
         self._daily_loss_flatten_last_at = now
@@ -2026,7 +2047,7 @@ class TradingEngine:
             except Exception:
                 continue
             if tkt not in live_tickets:
-                rec.close_time = datetime.utcnow()
+                rec.close_time = datetime.now(timezone.utc)
                 self.risk.on_trade_closed(
                     symbol=rec.symbol,
                     outcome="BREAKEVEN",
@@ -2113,8 +2134,8 @@ class TradingEngine:
                     row["forced_enabled"] = True
 
         return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "server_time": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "server_time": datetime.now(timezone.utc).isoformat(),
             "account": account,
             "positions": self._json_safe_positions(positions),
             "stats": merged_stats,
@@ -2272,9 +2293,9 @@ class TradingEngine:
         setup = str(getattr(getattr(signal, "setup_type", None), "value", "")).upper()
         entry = float(getattr(signal, "entry", 0.0) or 0.0)
         sl = float(getattr(signal, "sl", 0.0) or 0.0)
-        sig_time = getattr(signal, "time", datetime.utcnow())
+        sig_time = getattr(signal, "time", datetime.now(timezone.utc))
         if not isinstance(sig_time, datetime):
-            sig_time = datetime.utcnow()
+            sig_time = datetime.now(timezone.utc)
         return f"{symbol}:{side}:{setup}:{entry:.5f}:{sl:.5f}:{sig_time.strftime('%Y%m%d%H%M')}"
 
     def _json_safe_positions(self, positions: list) -> list:

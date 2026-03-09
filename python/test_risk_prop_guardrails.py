@@ -1,6 +1,6 @@
 import sys
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -88,7 +88,7 @@ class TestRiskPropGuardrails(unittest.TestCase):
 
     def test_double_close_idempotency_counts_once(self):
         rm = RiskManager(_base_cfg())
-        ts = datetime.utcnow()
+        ts = datetime.now(timezone.utc)
         rm.on_trade_closed(
             symbol="EURUSD",
             outcome="LOSS",
@@ -128,7 +128,7 @@ class TestRiskPropGuardrails(unittest.TestCase):
 
     def test_thesis_cooldown_after_two_losses(self):
         rm = RiskManager(_base_cfg())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         rm.on_trade_closed(
             symbol="EURUSD",
             outcome="LOSS",
@@ -163,7 +163,7 @@ class TestRiskPropGuardrails(unittest.TestCase):
         cfg = _base_cfg()
         cfg["correlation"]["enabled"] = False
         rm = RiskManager(cfg)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         rm.on_trade_closed(
             symbol="EURUSD",
             outcome="LOSS",
@@ -314,7 +314,7 @@ class TestRiskPropGuardrails(unittest.TestCase):
         cfg["correlation"]["single_loss_risk_scale"] = 0.5
         cfg["correlation"]["single_loss_risk_scale_seconds"] = 3600
         rm = RiskManager(cfg)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         rm.on_trade_closed(
             symbol="EURUSD",
             outcome="LOSS",

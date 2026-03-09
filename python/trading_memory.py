@@ -25,9 +25,10 @@ Also handles reconciliation between MT5 deal history and the local database
 to ensure no trades are missed even after bot restarts.
 """
 
+import logging
 import re
 import sqlite3
-import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict
@@ -108,8 +109,36 @@ class TradingMemoryDB:
     
     def _init_database(self):
         """Create database tables if they don't exist"""
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        cursor = self.conn.cursor()
+        attempts = 5
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+                cursor = self.conn.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                break
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if self.conn is not None:
+                    try:
+                        self.conn.close()
+                    except Exception:
+                        pass
+                    self.conn = None
+                if "locked" not in str(e).lower() or attempt >= attempts:
+                    raise
+                logger.warning(
+                    "MEMORY_DB_LOCK_WAIT path=%s attempt=%s/%s retry_in=1s err=%s",
+                    self.db_path,
+                    attempt,
+                    attempts,
+                    e,
+                )
+                time.sleep(1.0)
+        else:
+            raise last_error or sqlite3.OperationalError("database is locked")
         
         # Main trades table
         cursor.execute("""
@@ -562,7 +591,7 @@ class TradingMemoryDB:
         sl = float(position.get("sl") or 0.0)
         tp = float(position.get("tp") or 0.0)
         lot = float(position.get("volume") or 0.0)
-        open_time = position.get("open_time") or datetime.utcnow()
+        open_time = position.get("open_time") or datetime.now(timezone.utc)
 
         cursor = self.conn.cursor()
         cursor.execute(
@@ -680,7 +709,7 @@ class TradingMemoryDB:
         entry_price = float(deal.get("price") or 0.0)
         volume = float(deal.get("volume") or 0.0)
         time_raw = self._parse_db_datetime(deal.get("time"))
-        entry_time = time_raw or datetime.utcnow()
+        entry_time = time_raw or datetime.now(timezone.utc)
         canonical_ticket = position_id if position_id > 0 else (order_ticket if order_ticket > 0 else deal_ticket)
 
         cursor = self.conn.cursor()
@@ -799,7 +828,7 @@ class TradingMemoryDB:
 
         trade_id = trade_row["id"]
         trade_ticket = trade_row["ticket"]
-        resolved_exit_time = exit_time or datetime.utcnow()
+        resolved_exit_time = exit_time or datetime.now(timezone.utc)
 
         cursor.execute("""
         UPDATE trades
@@ -906,7 +935,7 @@ class TradingMemoryDB:
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (setup_type, total, wins, losses, breakevens,
               win_rate, avg_win, avg_loss, expectancy, confidence_score,
-              enabled, datetime.utcnow()))
+              enabled, datetime.now(timezone.utc)))
         
         self.conn.commit()
         
@@ -1375,7 +1404,7 @@ class TradingMemoryDB:
                 str(lesson.get("strongest_opposing_setup") or ""),
                 int(lesson.get("opposing_confluence_count") or 0),
                 str(lesson.get("lesson_summary") or ""),
-                lesson.get("created_at_utc") or datetime.utcnow(),
+                lesson.get("created_at_utc") or datetime.now(timezone.utc),
                 str(lesson.get("htf_bias") or ""),
                 str(lesson.get("kill_zone") or ""),
                 float(lesson.get("spread_pips") or 0.0),
@@ -1388,7 +1417,7 @@ class TradingMemoryDB:
         cursor = self.conn.cursor()
         rule_id = int(rule.get("id") or 0)
         payload = (
-            rule.get("created_at_utc") or datetime.utcnow(),
+            rule.get("created_at_utc") or datetime.now(timezone.utc),
             str(rule.get("rule_type") or ""),
             str(rule.get("affected_setup") or ""),
             str(rule.get("check_for") or ""),
@@ -1495,7 +1524,7 @@ class TradingMemoryDB:
             """,
             (
                 int(event.get("rule_id") or 0),
-                event.get("event_time_utc") or datetime.utcnow(),
+                event.get("event_time_utc") or datetime.now(timezone.utc),
                 str(event.get("symbol") or ""),
                 str(event.get("setup_id") or ""),
                 str(event.get("direction") or ""),
@@ -1597,7 +1626,7 @@ class TradingMemoryDB:
         if opened_ts is not None:
             existing["opened_ts"] = str(opened_ts)
         if not str(existing.get("opened_ts") or "").strip():
-            existing["opened_ts"] = datetime.utcnow().isoformat()
+            existing["opened_ts"] = datetime.now(timezone.utc).isoformat()
 
         cursor = self.conn.cursor()
         cursor.execute(

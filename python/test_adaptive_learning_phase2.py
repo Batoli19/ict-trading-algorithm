@@ -3,7 +3,7 @@ import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -67,7 +67,7 @@ class TestAdaptiveLearningPhase2(unittest.TestCase):
         }
 
     def _active_rule(self, rid: int = 1, expired=False) -> AdaptiveRule:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         return AdaptiveRule(
             id=rid,
             created_at_utc=now - timedelta(hours=2),
@@ -108,7 +108,7 @@ class TestAdaptiveLearningPhase2(unittest.TestCase):
 
     def test_candidate_rule_never_blocks(self):
         la = LossAnalyzer(None, _StrategyAlwaysOpposing(), self.memory, self._cfg(entry_blocking=True))
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         candidate = AdaptiveRule(
             id=0,
             created_at_utc=now - timedelta(hours=1),

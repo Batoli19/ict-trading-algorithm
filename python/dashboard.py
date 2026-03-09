@@ -24,7 +24,7 @@ Color codes used:
 import asyncio
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("DASH")
 
@@ -96,7 +96,7 @@ class Dashboard:
         clear()
 
         # ─── Header ──────────────────────────────────────────────────
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         connected = "🟢 LIVE" if status["connected"] else "🔴 DISCONNECTED"
         acct  = status["account"]
         stats = status["stats"]

@@ -18,7 +18,7 @@ Note: Requires the MetaTrader 5 desktop terminal to be running on Windows.
 import time
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import MetaTrader5 as mt5
 
@@ -320,7 +320,7 @@ class MT5Connector:
             "price":   result.price,
             "sl":      sl,
             "tp":      tp,
-            "time":    datetime.utcnow(),
+            "time":    datetime.now(timezone.utc),
             "comment": comment,
         }
 
@@ -396,7 +396,7 @@ class MT5Connector:
             "price": float(entry),
             "sl": float(sl),
             "tp": float(tp),
-            "time": datetime.utcnow(),
+            "time": datetime.now(timezone.utc),
             "comment": comment,
             "is_pending": True,
         }
@@ -681,8 +681,8 @@ class MT5Connector:
 
     def get_today_trades(self) -> list:
         self.ensure_connected()
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0)
-        now = datetime.utcnow()
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0)
+        now = datetime.now(timezone.utc)
         history = mt5.history_deals_get(today, now)
         if history is None:
             return []

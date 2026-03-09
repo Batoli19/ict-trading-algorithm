@@ -100,7 +100,7 @@ ict_trading_bot/
 │
 ├── 📁 config/
 │   ├── settings.json            ← ⚠️ Your credentials (gitignored, never uploaded)
-│   └── settings.example.json   ← ✅ Safe template — copy this to get started
+│   └── settings.template.json   ← ✅ Safe template — copy this to get started
 │
 ├── 📁 docs/
 │   ├── SETUP_GUIDE.md           ← Full setup instructions
@@ -134,10 +134,10 @@ pip install -r requirements.txt
 ### 3. Configure your credentials
 ```bash
 # Windows
-copy config\settings.example.json config\settings.json
+copy config\settings.template.json config\settings.json
 
 # Mac/Linux
-cp config/settings.example.json config/settings.json
+cp config/settings.template.json config/settings.json
 ```
 
 Then open `config/settings.json` and fill in:

@@ -10,7 +10,7 @@ Bypasses all filters: kill zones, news blocks, bias checks, etc.
 import asyncio
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from ict_strategy import Direction, SetupType, Signal
 
 logger = logging.getLogger("TESTMODE")
@@ -94,7 +94,7 @@ class TestMode:
         
         # Execute through engine
         await self.engine._execute_signal(signal, balance)
-        self._last_trade_time = datetime.utcnow()
+        self._last_trade_time = datetime.now(timezone.utc)
     
     def _get_pip_size(self, symbol: str) -> float:
         """Get pip size for a symbol"""

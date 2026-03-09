@@ -33,7 +33,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -75,9 +76,36 @@ class SharedLearningDB:
         WAL (Write-Ahead Logging) allows concurrent reads while writing,
         important because the bot reads rules while the analyzer writes lessons.
         """
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        cursor = self.conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")  # Enable concurrent read/write
+        attempts = 5
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+                cursor = self.conn.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                break
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if self.conn is not None:
+                    try:
+                        self.conn.close()
+                    except Exception:
+                        pass
+                    self.conn = None
+                if "locked" not in str(e).lower() or attempt >= attempts:
+                    raise
+                logger.warning(
+                    "SHARED_DB_LOCK_WAIT path=%s attempt=%s/%s retry_in=1s err=%s",
+                    self.db_path,
+                    attempt,
+                    attempts,
+                    e,
+                )
+                time.sleep(1.0)
+        else:
+            raise last_error or sqlite3.OperationalError("database is locked")
 
 
         # Table 1: global_lessons — stores individual lessons from losing trades
@@ -201,7 +229,7 @@ class SharedLearningDB:
                 str(lesson.get("strongest_opposing_setup") or ""),
                 int(lesson.get("opposing_confluence_count") or 0),
                 str(lesson.get("lesson_summary") or ""),
-                lesson.get("created_at_utc") or datetime.utcnow(),
+                lesson.get("created_at_utc") or datetime.now(timezone.utc),
                 str(lesson.get("htf_bias") or ""),
                 str(lesson.get("kill_zone") or ""),
                 float(lesson.get("spread_pips") or 0.0),
@@ -215,7 +243,7 @@ class SharedLearningDB:
         rule_id = int(rule.get("id") or 0)
         payload = (
             int(rule.get("source_account_login") or self.account_login or 0),
-            rule.get("created_at_utc") or datetime.utcnow(),
+            rule.get("created_at_utc") or datetime.now(timezone.utc),
             str(rule.get("rule_type") or ""),
             str(rule.get("affected_setup") or ""),
             str(rule.get("check_for") or ""),
@@ -323,7 +351,7 @@ class SharedLearningDB:
             """,
             (
                 int(event.get("rule_id") or 0),
-                event.get("event_time_utc") or datetime.utcnow(),
+                event.get("event_time_utc") or datetime.now(timezone.utc),
                 int(event.get("account_login") or self.account_login or 0),
                 str(event.get("symbol") or ""),
                 str(event.get("setup_id") or ""),

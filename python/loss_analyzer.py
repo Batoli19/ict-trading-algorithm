@@ -33,7 +33,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("LOSS_ANALYZER")
@@ -155,7 +155,7 @@ class LossAnalyzer:
         return out
 
     def _utcnow(self) -> datetime:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
     def _get_value(self, obj, key: str, default=None):
         if isinstance(obj, dict):
@@ -180,9 +180,14 @@ class LossAnalyzer:
         if value is None:
             return None
         if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                return value.astimezone(timezone.utc).replace(tzinfo=None)
             return value
         try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
         except Exception:
             return None
 

@@ -12,7 +12,7 @@ Add this to bot_engine as a background task.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Set
 
 import MetaTrader5 as mt5
@@ -35,7 +35,7 @@ class TradeAnalyzer:
         
         while not self.engine.shutdown.is_set():
             try:
-                self.engine.analyzer_last_tick = datetime.utcnow()
+                self.engine.analyzer_last_tick = datetime.now(timezone.utc)
                 logger.info(
                     "ANALYZER_TICK ts=%s running=%s",
                     self.engine.analyzer_last_tick.isoformat(),
@@ -89,7 +89,7 @@ class TradeAnalyzer:
         sl = float(db_record.get("sl_price") or 0.0)
         t = self._parse_time(db_record.get("entry_time"))
         if not isinstance(t, datetime):
-            t = datetime.utcnow()
+            t = datetime.now(timezone.utc)
         return f"{symbol}:{side}:{setup}:{entry:.5f}:{sl:.5f}:{t.strftime('%Y%m%d%H%M')}"
 
     def _deal_match_score(self, db_trade: Dict, mt5_trade: Dict) -> int:
@@ -190,7 +190,7 @@ class TradeAnalyzer:
     
     async def analyze_recent_closes(self):
         """Find DB-recorded trades that are now closed and record exits."""
-        deals = self.mt5.get_deals_between(datetime.utcnow() - timedelta(hours=48), datetime.utcnow())
+        deals = self.mt5.get_deals_between(datetime.now(timezone.utc) - timedelta(hours=48), datetime.now(timezone.utc))
         self._sync_entry_deals(deals)
 
         try:
@@ -386,7 +386,7 @@ class TradeAnalyzer:
                 symbol=symbol,
                 outcome=outcome,
                 pnl=float(pnl),
-                exit_time=exit_time or datetime.utcnow(),
+                exit_time=exit_time or datetime.now(timezone.utc),
                 ticket=db_record.get("ticket"),
                 direction=db_record.get("direction", ""),
                 setup_id=str(db_record.get("setup_id", "") or self._build_setup_id(db_record)),

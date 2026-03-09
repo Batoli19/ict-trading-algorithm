@@ -40,10 +40,8 @@
     }
   },
   "execution": {
-    "profile": "normal",
-    "force_enable_setups": [
-      "FVG"
-    ],
+    "profile": "sniper",
+    "force_enable_setups": [],
     "min_confidence": 0.68,
     "min_rr": 1.6,
     "rr_epsilon": 0.02,
@@ -83,15 +81,27 @@
     "ob_override_requires_displacement": true,
     "discount_premium_buffer_pct": 0.05,
     "require_displacement": false,
+    "require_close_beyond_structure": true,
     "atr_period": 14,
     "min_displacement_atr_mult": 0.8,
     "avoid_chop": false,
     "reversal_gate_enabled": false,
     "chop_lookback": 30,
+    "chop_atr_period": 14,
+    "chop_min_atr_pct": 0.03,
+    "chop_max_band_pct": 0.25,
+    "chop_strict_in_asia_pre_session": true,
+    "chop_asia_min_atr_pct": 0.04,
+    "chop_asia_max_band_pct": 0.2,
+    "chop_asia_max_overlap_pct": 0.6,
+    "chop_allow_range_reversal_extremes_only": true,
     "max_overlap_pct": 0.65,
     "one_trade_per_symbol_per_killzone": true,
     "reentry_requires_new_setup": true,
     "enforce_killzones": true,
+    "reversal_gate_require_sweep": true,
+    "reversal_gate_require_mss": true,
+    "reversal_gate_min_conditions_required": 2,
     "per_symbol": {
       "XAUUSD": {
         "min_rr": 2.0,
@@ -221,24 +231,15 @@
     "USDJPY": 4,
     "XAUUSD": 30
   },
-  "reversal_gate": {
-    "require_sweep": true,
-    "require_mss": true,
-    "min_conditions_required": 2
-  },
   "htf_bias_control": {
     "enabled": true,
     "reduce_risk_on_conflict": true,
     "block_on_strong_conflict": false
   },
-  "displacement": {
-    "atr_multiplier": 1.5,
-    "require_close_beyond_structure": true
-  },
   "prop_guardrails": {
     "enabled": false,
     "daily_profit_lock_pct": 0.0,
-    "daily_loss_cap_pct": 99.0,
+    "daily_loss_cap_pct": 3.0,
     "loss_streak_limit": 3,
     "pause_minutes_on_streak": 120,
     "stop_for_day_on_streak": false,
@@ -288,23 +289,10 @@
     "cooldown_seconds_after_new_rule": 1800,
     "shadow_mode": true
   },
-  "chop_filter": {
-    "enabled": true,
-    "atr_period": 14,
-    "lookback": 24,
-    "min_atr_pct": 0.03,
-    "max_band_pct": 0.25,
-    "max_overlap_pct": 0.7,
-    "strict_in_asia_pre_session": true,
-    "asia_min_atr_pct": 0.04,
-    "asia_max_band_pct": 0.2,
-    "asia_max_overlap_pct": 0.6,
-    "allow_range_reversal_extremes_only": true
-  },
   "risk": {
     "risk_per_trade_pct": 1.5,
     "max_open_trades": 3,
-    "max_cumulative_loss_pct": 99,
+    "max_cumulative_loss_pct": 8.0,
     "max_consecutive_losses": 0,
     "loss_streak_cooldown_minutes": 0,
     "max_trades_per_symbol_per_hour": 999,
@@ -319,9 +307,9 @@
     "equity_dd_stop_pct": 5.0,
     "xauusd_max_trades_per_day": 50,
     "max_total_open_risk_pct": 3.0,
-    "max_daily_loss_pct": 99.0,
-    "max_daily_trades": 10000,
-    "daily_profit_target_usd": 1000000000,
+    "max_daily_loss_pct": 3.0,
+    "max_daily_trades": 20,
+    "daily_profit_target_usd": 0,
     "rr_ratio": 2.0,
     "trailing_stop": true,
     "trailing_stop_pips": 0,

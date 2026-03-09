@@ -12,7 +12,7 @@ Now includes:
 import json
 import time
 import logging
-from datetime import date, datetime, time as datetime_time
+from datetime import date, datetime, time as datetime_time, timezone
 from decimal import Decimal
 from pathlib import Path
 from threading import Thread
@@ -81,7 +81,7 @@ class DashboardAPI:
                             {
                                 **self._empty_status_payload(),
                                 "error": str(e),
-                                "server_time": datetime.utcnow().isoformat(),
+                                "server_time": datetime.now(timezone.utc).isoformat(),
                             },
                             default=self._json_default,
                         )
@@ -127,8 +127,8 @@ class DashboardAPI:
 
     def _empty_status_payload(self):
         return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "server_time": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "server_time": datetime.now(timezone.utc).isoformat(),
             "connected": False,
             "account": {},
             "positions": [],
@@ -185,7 +185,7 @@ class DashboardAPI:
 
     def _build_diagnostics(self):
         diagnostics = {
-            "server_time": datetime.utcnow().isoformat(),
+            "server_time": datetime.now(timezone.utc).isoformat(),
             "analyzer_running": bool(getattr(self.engine, "analyzer_running", False)),
             "analyzer_last_tick": None,
             "db_counts": {"total_trades": 0, "closed_trades": 0},
