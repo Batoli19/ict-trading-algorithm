@@ -84,7 +84,7 @@ class HybridGate:
         # Used for re-entry blocking logic
         self._last_close_by_symbol: Dict[str, Dict] = {}
 
-    def on_trade_closed(self, symbol: str, pnl: float, direction: Optional[str], setup_type: Optional[str]):
+    def on_trade_closed(self, symbol: str, pnl: Optional[float], direction: Optional[str], setup_type: Optional[str]):
         """
         Called by the engine when a trade closes. Sets cooldown timers
         and records the trade's direction/setup for re-entry blocking.
@@ -96,7 +96,7 @@ class HybridGate:
 
         Args:
             symbol:     The instrument that was closed (e.g. "EURUSD")
-            pnl:        Trade P&L (positive=win, negative=loss, zero=BE)
+            pnl:        Trade P&L (positive=win, negative=loss, zero=BE, default None for fast path detection)
             direction:  "BUY" or "SELL"
             setup_type: Which ICT setup was used (e.g. "FVG", "STOP_HUNT")
         """
@@ -109,12 +109,12 @@ class HybridGate:
         cd_win = int(hcfg.get("cooldown_after_win_seconds", 0))      # Win-specific
 
         # Pick the appropriate cooldown based on trade outcome
-        if pnl < 0:
+        if pnl is not None and pnl < 0:
             cooldown = max(cd_close, cd_loss)     # Use the longer of the two
-        elif pnl > 0:
+        elif pnl is not None and pnl > 0:
             cooldown = max(cd_close, cd_win)
         else:
-            cooldown = cd_close  # Break-even uses generic close cooldown
+            cooldown = cd_close  # Break-even or unknown uses generic close cooldown
 
         # Set the cooldown timer
         if cooldown > 0:

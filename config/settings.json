@@ -1,10 +1,13 @@
 {
   "mt5": {
-    "login": 5047375529,
-    "password": "8d_bYlWt",
+    "login": 103498720,
+    "password": "-0JuBpFh",
     "server": "MetaQuotes-Demo",
     "timeout": 10000
   },
+  "disabled_setups": [
+    "PIN_BAR"
+  ],
   "pairs": [
     "USDJPY",
     "USDCHF",
@@ -338,7 +341,7 @@
   },
   "hybrid": {
     "enabled": true,
-    "trade_only_in_kill_zones": false,
+    "trade_only_in_kill_zones": true,
     "allowed_kill_zones": [
       "LONDON_OPEN",
       "NY_OPEN",
@@ -389,7 +392,7 @@
         "end": "17:00",
         "tz": "UTC"
       },
-      "trade_only_in_kill_zones": false,
+      "trade_only_in_kill_zones": true,
       "comment": "Kill zones now give +10% confidence bonus instead of blocking trades"
     },
     "order_blocks": {

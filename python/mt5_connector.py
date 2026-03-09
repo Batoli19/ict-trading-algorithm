@@ -193,33 +193,33 @@ class MT5Connector:
 
     def get_pip_value_per_lot(self, symbol: str) -> float:
         self.ensure_connected()
+        tick = mt5.symbol_info_tick(symbol)
         info = self.get_symbol_info(symbol) or {}
+        pip_size = float(info.get("pip_size", 0.0) or self._pip_size_for_symbol(symbol))
+
+        # Prefer MT5's empirical order_calc_profit due to broker tick misreporting on XAU
+        if tick and pip_size > 0.0:
+            try:
+                ref_price = float(getattr(tick, "ask", 0.0) or getattr(tick, "bid", 0.0) or 0.0)
+                if ref_price > 0.0:
+                    profit = mt5.order_calc_profit(
+                        mt5.ORDER_TYPE_BUY,
+                        symbol,
+                        1.0,
+                        ref_price,
+                        ref_price + pip_size,
+                    )
+                    if profit is not None and float(profit) > 0.0:
+                        return abs(float(profit))
+            except Exception as e:
+                logger.warning(f"order_calc_profit failed for {symbol}: {e}")
+
+        # Fallback to symbol_info calculation if order_calc_profit fails
         pip_value = float(info.get("pip_value_per_lot", 0.0) or 0.0)
         if pip_value > 0.0:
             return pip_value
 
-        tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
-            return 0.0
-
-        pip_size = float(info.get("pip_size", 0.0) or self._pip_size_for_symbol(symbol))
-        if pip_size <= 0.0:
-            return 0.0
-
-        try:
-            ref_price = float(getattr(tick, "ask", 0.0) or getattr(tick, "bid", 0.0) or 0.0)
-            if ref_price <= 0.0:
-                return 0.0
-            profit = mt5.order_calc_profit(
-                mt5.ORDER_TYPE_BUY,
-                symbol,
-                1.0,
-                ref_price,
-                ref_price + pip_size,
-            )
-            return abs(float(profit or 0.0))
-        except Exception:
-            return 0.0
+        return 0.0
 
     def estimate_profit_usd(
         self,

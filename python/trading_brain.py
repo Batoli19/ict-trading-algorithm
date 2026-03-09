@@ -298,9 +298,15 @@ class TradingBrain:
     def should_disable_setup(self, setup_type: str) -> bool:
         """
         Disable setup if:
+          • Setup is globally disabled in config
           • Has 50+ trades AND
           • Confidence < 60%
         """
+        # First check config
+        cfg_disabled = self.config.get("disabled_setups", [])
+        if setup_type.upper() in [s.upper() for s in cfg_disabled]:
+            return True
+            
         exec_cfg = self.config.get("execution", {}) if isinstance(self.config.get("execution", {}), dict) else {}
         forced = exec_cfg.get("force_enable_setups", [])
         if not isinstance(forced, list):

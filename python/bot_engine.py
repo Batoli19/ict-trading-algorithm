@@ -123,6 +123,7 @@ class TradingEngine:
         self._pending_cancel_reasons: deque[dict] = deque(maxlen=20)
         self._daily_loss_flatten_last_at: Optional[datetime] = None
         self._adaptive_last_validate_at: Optional[datetime] = None
+        self._last_open_tickets: set[int] = set()
 
     async def _startup(self) -> bool:
         logger.info("Connecting to MT5...")
@@ -1898,11 +1899,52 @@ class TradingEngine:
         self._tm_partial_retry_after = new_cache
 
     def _sync_live_positions_to_memory(self, positions: Optional[list] = None):
+        live_positions = list(positions or [])
+        
+        current_tickets = set()
+        for p in live_positions:
+            tk = p.get("ticket")
+            if tk is not None:
+                try:
+                    current_tickets.add(int(tk))
+                except Exception:
+                    pass
+                    
+        missing_tickets = self._last_open_tickets - current_tickets
+        for tkt in missing_tickets:
+            logger.warning(f"FAST_PATH_EXIT_DETECTED: ticket={tkt} missing from live MT5 positions.")
+            try:
+                open_db_trades = self.memory.get_open_trades(include_pending=False)
+                for db_trade in open_db_trades:
+                    db_tkt = db_trade.get("ticket")
+                    if db_tkt and int(db_tkt) == tkt:
+                        sym = str(db_trade.get("symbol", ""))
+                        dir_ = str(db_trade.get("direction", ""))
+                        setup_ = str(db_trade.get("setup_type", ""))
+                        if sym:
+                            logger.info(f"FAST_PATH_EXIT_APPLY: symbol={sym} ticket={tkt}")
+                            try:
+                                self.cooldowns.on_exit(sym, 0.0)
+                            except Exception:
+                                pass
+                            try:
+                                self.hybrid_gate.on_trade_closed(
+                                    symbol=sym,
+                                    pnl=None,
+                                    direction=dir_,
+                                    setup_type=setup_
+                                )
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.error(f"Fast path exit logic failed: {e}", exc_info=True)
+                
+        self._last_open_tickets = current_tickets
+
         ensure_fn = getattr(self.memory, "ensure_open_trade_from_position", None)
         if not callable(ensure_fn):
             return
 
-        live_positions = list(positions or [])
         if not live_positions:
             return
 
