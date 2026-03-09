@@ -1,3 +1,24 @@
+"""
+Risk Manager — Position Sizing & Account Protection
+════════════════════════════════════════════════════
+Controls how much capital is risked on each trade and enforces account-level
+safety limits. This is the LAST gate before an order is placed.
+
+Key responsibilities:
+    LOT SIZING:         Calculate position size based on risk % of account balance
+    DAILY LIMITS:       Max daily trades, max daily loss (PnL + equity floor)
+    COOLDOWNS:          Per-symbol, after-loss, and global throttle timers
+    LOSS STREAK:        Pause trading after N consecutive losses
+    PROP GUARDRAILS:    Prop firm-specific rules (daily loss cap, profit lock,
+                        max total open risk, stop-for-day triggers)
+    CORRELATION:        USD-thesis grouping — blocks correlated pairs (e.g.
+                        EURUSD + GBPUSD both long = same USD short thesis)
+    DRAWDOWN:           Max cumulative drawdown from equity peak
+
+All limits reset at midnight UTC each day via _check_reset().
+The can_trade() method is called before every entry to check all conditions.
+"""
+
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta

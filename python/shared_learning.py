@@ -1,8 +1,32 @@
 """
-Shared adaptive learning storage.
+Shared Learning Database — Cross-Account Adaptive Learning
+═════════════════════════════════════════════════════
+Stores lessons learned and adaptive rules in a GLOBAL database
+(separate from the per-account TradingMemoryDB). This allows
+knowledge to be shared across multiple trading accounts.
 
-Lessons and adaptive rules are stored in a global database so they can be
-reused across account-specific trade databases.
+Architecture:
+    Each account has its own TradingMemoryDB (per-account trades).
+    All accounts share ONE SharedLearningDB (global knowledge).
+
+    Account A (demo) --\                           
+    Account B (prop) ---+--> SharedLearningDB --> Shared rules & lessons
+    Account C (live) --/                           
+
+Database tables:
+    global_lessons:      Lessons extracted from losing trades
+                         (what went wrong, opposing signals missed)
+    global_rules:        Adaptive rules derived from lessons
+                         (e.g., "block FVG when opposing STOP_HUNT detected")
+    global_rule_events:  Audit log of when rules triggered/blocked trades
+
+Rule lifecycle:
+    1. CANDIDATE:  Created from loss patterns, needs validation
+    2. ACTIVE:     Validated (precision > 65%, sample > 10), actively blocking
+    3. DISABLED:   Too many false positives, turned off
+
+The bootstrap_from_account_memory() method can migrate existing
+per-account data into the shared database on first run.
 """
 
 from __future__ import annotations
@@ -17,40 +41,70 @@ logger = logging.getLogger("SHARED_LEARNING")
 
 
 class SharedLearningDB:
+    """
+    Global SQLite database for cross-account learning.
+
+    Stores lessons (why trades failed) and adaptive rules (patterns to avoid)
+    that are shared across all trading accounts. This means if Account A
+    learns that FVG trades fail when a STOP_HUNT is present on the opposing
+    side, Account B benefits from that knowledge automatically.
+
+    Usage:
+        db = SharedLearningDB(Path("memory/shared_learning.db"), account_login=12345)
+        db.save_learned_lesson({...})     # Store a lesson from a loss
+        db.save_adaptive_rule({...})      # Create/update an adaptive rule
+        rules = db.load_adaptive_rules()  # Load all rules for entry blocking
+    """
+
     def __init__(self, db_path: Path, account_login: int = 0):
+        """
+        Args:
+            db_path:       Path to the SQLite database file
+            account_login: MT5 account login ID (tags lessons with their source)
+        """
         self.db_path = Path(db_path)
         self.account_login = int(account_login or 0)
         self.conn: Optional[sqlite3.Connection] = None
         self._init_database()
 
     def _init_database(self):
+        """
+        Initialize the SQLite database with WAL journal mode and create
+        all required tables if they don't exist.
+
+        WAL (Write-Ahead Logging) allows concurrent reads while writing,
+        important because the bot reads rules while the analyzer writes lessons.
+        """
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         cursor = self.conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA journal_mode=WAL")  # Enable concurrent read/write
 
+
+        # Table 1: global_lessons — stores individual lessons from losing trades
+        # Each lesson records what the bot expected, what actually happened,
+        # what opposing signals were missed, and a summary of the lesson.
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS global_lessons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_account_login INTEGER,
-                ticket INTEGER,
-                symbol TEXT,
-                expected_direction TEXT,
-                actual_direction TEXT,
-                entry_reasons_json TEXT,
-                entry_setups_json TEXT,
-                entry_confidence REAL,
-                missed_opposing_signals_json TEXT,
-                strongest_opposing_setup TEXT,
-                opposing_confluence_count INTEGER,
-                lesson_summary TEXT,
+                source_account_login INTEGER,        -- Which account generated this lesson
+                ticket INTEGER,                      -- MT5 deal ticket number
+                symbol TEXT,                         -- Trading instrument (e.g. EURUSD)
+                expected_direction TEXT,              -- What we thought would happen (BUY/SELL)
+                actual_direction TEXT,                -- What actually happened
+                entry_reasons_json TEXT,              -- Why we entered (JSON array)
+                entry_setups_json TEXT,               -- Which setups triggered (JSON array)
+                entry_confidence REAL,               -- Signal confidence at entry
+                missed_opposing_signals_json TEXT,    -- Opposing signals we should have seen
+                strongest_opposing_setup TEXT,        -- The strongest signal we missed
+                opposing_confluence_count INTEGER,    -- How many opposing signals existed
+                lesson_summary TEXT,                 -- Human-readable lesson text
                 created_at_utc TIMESTAMP,
-                htf_bias TEXT,
-                kill_zone TEXT,
-                spread_pips REAL
+                htf_bias TEXT,                       -- H4 bias at time of entry
+                kill_zone TEXT,                      -- Which session (London, NY, etc.)
+                spread_pips REAL                     -- Spread at time of entry
             )
-            """
-        )
+            """)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS global_rules (
@@ -338,6 +392,20 @@ class SharedLearningDB:
         }
 
     def bootstrap_from_account_memory(self, account_memory) -> Dict:
+        """
+        One-time migration: copy lessons, rules, and events from a
+        per-account TradingMemoryDB into this shared database.
+
+        Only runs if the shared DB is empty (first-time setup).
+        This allows existing accounts to contribute their learnings
+        to the shared knowledge base.
+
+        Args:
+            account_memory: TradingMemoryDB instance with existing data
+
+        Returns:
+            Dict with bootstrapped=True/False and counts of migrated items.
+        """
         result = {"bootstrapped": False, "lessons": 0, "rules": 0, "rule_events": 0}
         src_conn = getattr(account_memory, "conn", None)
         if src_conn is None:

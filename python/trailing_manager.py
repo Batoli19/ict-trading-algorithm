@@ -1,3 +1,26 @@
+"""
+Trailing Manager — Structure-Based Stop Loss Management
+════════════════════════════════════════════════════════
+Moves stop-loss levels for open positions using ICT market structure
+concepts rather than simple pip-based trailing.
+
+Trailing methods (highest priority wins):
+    1. BREAKEVEN (BE):  Move SL to entry + buffer after sufficient profit
+                        (triggered by pip threshold OR R-multiple)
+    2. SWING TRAIL:     Trail behind fractal swing lows (BUY) or swing highs (SELL)
+                        using M1 or M5 candles with configurable fractal params
+    3. ORDER BLOCK (OB):Trail behind the last opposing candle before impulse
+    4. TP MISS PROTECT: Lock in 90% of profit when price gets within 2 pips of TP
+
+Safety checks:
+    - SL can only tighten (never widen) — enforced by floor/ceiling logic
+    - Market validation ensures new SL respects broker stops_level/freeze_level
+    - Per-symbol config allows tuning fractal sensitivity for different instruments
+
+Each position is tracked via TrailingState (keyed by ticket) to remember
+the last applied SL and prevent regression.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -82,6 +105,22 @@ class StructureTrailingManager:
                 "min_swing_atr_mult": 0.2,
                 "allow_ob_trail": True,
                 "ob_min_impulse_atr_mult": 0.8,
+            },
+            # Gold needs much larger values — 1 pip = $0.10, ATR ~200+ pips/day
+            "XAUUSD": {
+                "fractal_left": 3,
+                "fractal_right": 3,
+                "swing_buffer_pips": 5.0,
+                "min_swing_pips": 10.0,
+                "min_swing_atr_mult": 0.3,
+                "allow_ob_trail": True,
+                "ob_min_impulse_atr_mult": 1.0,
+                "be_enabled": True,
+                "be_min_profit_pips": 30.0,
+                "be_trigger_r_multiple": 0.8,
+                "be_buffer_pips": 3.0,
+                "swing_tf": "M5",
+                "trailing_tf": "M5",
             },
         }
 

@@ -1,14 +1,28 @@
 """
-Trading Memory System
-─────────────────────
-SQLite database that records:
-  • Every trade taken with full context
-  • Why the trade was taken (reasoning, conditions seen)
-  • Expected outcome vs actual outcome
-  • Why losses happened (stop hit location, market structure)
-  • Setup-specific performance metrics
-  
-This is the bot's long-term memory.
+Trading Memory System — Persistent Trade Database
+══════════════════════════════════════════════════
+SQLite database that acts as the bot's long-term memory. Every trade is
+recorded with full context so the AI brain can learn from historical data.
+
+Database tables:
+    trades:                 Every trade with entry/exit details, reasoning, and outcome
+    setup_performance:      Aggregated win rate, expectancy per setup type (FVG, SNIPER, etc.)
+    stop_patterns:          Why stops get hit (wick/spike, momentum, news) — per setup type
+    learned_lessons:        Post-loss analysis lessons (what was missed, opposing signals)
+    adaptive_rules:         Auto-generated rules to block bad patterns (CANDIDATE → ACTIVE)
+    rule_events:            Audit log of when adaptive rules triggered
+    trade_management_state: Tracks partial TP levels and R-multiple progress per position
+
+Key methods:
+    record_entry()           → Store a new trade with full reasoning context
+    record_exit()            → Record trade outcome (WIN/LOSS/BREAKEVEN) with analysis
+    get_setup_confidence()   → Calculate confidence score from historical win rate
+    get_stop_hit_analysis()  → Find dominant reasons stops get hit per setup
+    is_setup_enabled()       → Check if setup should be disabled (<60% with 50+ trades)
+    ensure_open_trade_from_position() → Sync live MT5 positions to DB (recovery)
+
+Also handles reconciliation between MT5 deal history and the local database
+to ensure no trades are missed even after bot restarts.
 """
 
 import re

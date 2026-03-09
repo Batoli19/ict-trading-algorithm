@@ -1,6 +1,27 @@
 """
-Trading Engine - WITH AI INTEGRATION
-Enhanced version with Memory & Brain system added to your existing code.
+Trading Engine — Main Bot Orchestrator (WITH AI INTEGRATION)
+════════════════════════════════════════════════════════════
+The central event loop that coordinates all trading components.
+This is the "brain stem" — it wires together strategy, risk management,
+order execution, and AI learning into one async loop.
+
+Async tasks running concurrently:
+    _scan_loop():    Every N seconds, scan all symbols for new ICT signals.
+                     Pipeline: ICTStrategy → SniperFilter → HybridGate →
+                     RiskManager.can_trade() → place_market_order()
+    _manage_loop():  Every N seconds, manage open positions:
+                     trailing stops, breakeven, TP-miss protection
+    _news_loop():    Periodically refresh ForexFactory news calendar
+    TradeAnalyzer:   Detect closed trades, analyze wins/losses, update AI memory
+
+Component initialization (in _startup):
+    MT5Connector → ICTStrategy → SniperFilter → RiskManager →
+    TradingMemoryDB → TradingBrain → LossAnalyzer → SharedLearningDB →
+    HybridGate → CooldownManager → StructureTrailingManager →
+    NewsFilter → Notifier → DashboardAPI
+
+The engine also provides get_status() for the web dashboard API,
+returning real-time account info, positions, stats, and AI metrics.
 """
 
 import asyncio
@@ -1129,6 +1150,12 @@ class TradingEngine:
                 "tp2_close_pct": float(partials_raw.get("tp2_close_pct", 0.25) or 0.25),
                 "tp2_sl_lock_r": float(partials_raw.get("tp2_sl_lock_r", 1.0) or 1.0),
                 "trail_only_after_tp1": bool(partials_raw.get("trail_only_after_tp1", True)),
+                "use_static_tp1_usd": bool(partials_raw.get("use_static_tp1_usd", True)),
+                "tp1_static_usd": float(partials_raw.get("tp1_static_usd", 55.0) or 55.0),
+                "tp1_static_usd_min": float(partials_raw.get("tp1_static_usd_min", 50.0) or 50.0),
+                "tp1_static_usd_max": float(partials_raw.get("tp1_static_usd_max", 60.0) or 60.0),
+                "min_tp2_remaining_usd": float(partials_raw.get("min_tp2_remaining_usd", 25.0) or 25.0),
+                "fallback_to_single_tp_if_small_trade": bool(partials_raw.get("fallback_to_single_tp_if_small_trade", True)),
             },
             "giveback_guard": {
                 "enabled": bool(giveback_raw.get("enabled", True)),
@@ -1233,6 +1260,196 @@ class TradingEngine:
             "INVALID_CLOSE_VOLUME",
         }
         return code in permanent
+
+    def _estimate_profit_usd(
+        self,
+        symbol: str,
+        side: str,
+        volume: float,
+        entry_price: float,
+        exit_price: float,
+        symbol_info: Optional[dict] = None,
+    ) -> float:
+        symbol_key = str(symbol or "").upper().strip()
+        direction = str(side or "").upper().strip()
+        qty = float(volume or 0.0)
+        entry = float(entry_price or 0.0)
+        close_price = float(exit_price or 0.0)
+        if not symbol_key or direction not in ("BUY", "SELL") or qty <= 0.0 or entry <= 0.0 or close_price <= 0.0:
+            return 0.0
+
+        estimator = getattr(self.mt5, "estimate_profit_usd", None)
+        if callable(estimator):
+            try:
+                return float(
+                    estimator(
+                        symbol=symbol_key,
+                        side=direction,
+                        volume=qty,
+                        open_price=entry,
+                        close_price=close_price,
+                        symbol_info=symbol_info or {},
+                    )
+                    or 0.0
+                )
+            except TypeError:
+                try:
+                    return float(estimator(symbol_key, direction, qty, entry, close_price, symbol_info or {}) or 0.0)
+                except TypeError:
+                    return float(estimator(symbol_key, direction, qty, entry, close_price) or 0.0)
+            except Exception:
+                return 0.0
+
+        info = symbol_info or {}
+        tick_value = float(info.get("trade_tick_value", 0.0) or 0.0)
+        tick_size = float(info.get("trade_tick_size", 0.0) or info.get("point", 0.0) or 0.0)
+        if tick_value <= 0.0 or tick_size <= 0.0:
+            return 0.0
+        price_delta = (close_price - entry) if direction == "BUY" else (entry - close_price)
+        return float((price_delta / tick_size) * tick_value * qty)
+
+    def _build_static_tp1_plan(
+        self,
+        position: dict,
+        open_trade: Optional[dict],
+        partials_cfg: dict,
+        initial_risk: float,
+        original_volume: float,
+        symbol_info: Optional[dict] = None,
+    ) -> dict:
+        plan = {
+            "enabled": False,
+            "skip_partials": False,
+            "reason": "",
+            "tp1_price": 0.0,
+            "final_tp_price": 0.0,
+            "full_tp_usd": 0.0,
+            "tp1_full_position_usd": 0.0,
+            "tp1_target_usd": 0.0,
+            "requested_close_volume": 0.0,
+            "close_volume": 0.0,
+            "remaining_volume": float(position.get("volume", 0.0) or 0.0),
+            "remaining_tp2_usd": 0.0,
+            "volume_check_reason": "",
+            "tp2_manage_runner_only": False,
+        }
+        if not bool(partials_cfg.get("use_static_tp1_usd", False)):
+            return plan
+
+        symbol = str(position.get("symbol", "")).upper().strip()
+        side = str(position.get("type", "")).upper().strip()
+        entry_price = float(position.get("open_price", 0.0) or 0.0)
+        position_volume = float(position.get("volume", 0.0) or 0.0)
+        final_tp_price = 0.0
+        if isinstance(open_trade, dict):
+            final_tp_price = float(open_trade.get("tp_price", 0.0) or 0.0)
+        if final_tp_price <= 0.0:
+            final_tp_price = float(position.get("tp", 0.0) or 0.0)
+        if (
+            not symbol
+            or side not in ("BUY", "SELL")
+            or entry_price <= 0.0
+            or initial_risk <= 0.0
+            or original_volume <= 0.0
+            or position_volume <= 0.0
+            or final_tp_price <= 0.0
+        ):
+            plan["reason"] = "STATIC_TP1_INVALID_INPUT"
+            return plan
+
+        sign = 1.0 if side == "BUY" else -1.0
+        tp1_r = float(partials_cfg.get("tp1_r", 1.0) or 1.0)
+        tp1_price = entry_price + (sign * tp1_r * initial_risk)
+        full_tp_usd = self._estimate_profit_usd(symbol, side, original_volume, entry_price, final_tp_price, symbol_info=symbol_info)
+        tp1_full_position_usd = self._estimate_profit_usd(symbol, side, original_volume, entry_price, tp1_price, symbol_info=symbol_info)
+        plan["enabled"] = True
+        plan["tp1_price"] = float(tp1_price)
+        plan["final_tp_price"] = float(final_tp_price)
+        plan["full_tp_usd"] = float(full_tp_usd)
+        plan["tp1_full_position_usd"] = float(tp1_full_position_usd)
+        plan["tp2_manage_runner_only"] = True
+
+        if full_tp_usd <= 0.0 or tp1_full_position_usd <= 0.0:
+            plan["enabled"] = False
+            plan["reason"] = "STATIC_TP1_PROFIT_ESTIMATE_INVALID"
+            return plan
+
+        tp1_target_min = float(partials_cfg.get("tp1_static_usd_min", 50.0) or 50.0)
+        tp1_target_max = float(partials_cfg.get("tp1_static_usd_max", 60.0) or 60.0)
+        if tp1_target_max < tp1_target_min:
+            tp1_target_min, tp1_target_max = tp1_target_max, tp1_target_min
+        desired_target = float(partials_cfg.get("tp1_static_usd", 55.0) or 55.0)
+        desired_target = min(max(desired_target, tp1_target_min), tp1_target_max)
+        min_tp2_remaining_usd = max(0.0, float(partials_cfg.get("min_tp2_remaining_usd", 25.0) or 25.0))
+        fallback_single_tp = bool(partials_cfg.get("fallback_to_single_tp_if_small_trade", True))
+
+        max_target_to_leave_runner = max(0.0, full_tp_usd - min_tp2_remaining_usd)
+        max_feasible_target = min(tp1_full_position_usd, max_target_to_leave_runner)
+        target_tp1_usd = min(desired_target, max_feasible_target)
+        plan["tp1_target_usd"] = float(max(0.0, target_tp1_usd))
+
+        if max_feasible_target <= 0.0:
+            plan["skip_partials"] = bool(fallback_single_tp)
+            plan["reason"] = "STATIC_TP1_NO_RUNNER_ROOM"
+            plan["remaining_tp2_usd"] = float(full_tp_usd)
+            return plan
+
+        if target_tp1_usd + 1e-9 < tp1_target_min and fallback_single_tp:
+            plan["skip_partials"] = True
+            plan["reason"] = "STATIC_TP1_SMALL_TRADE_SINGLE_TP"
+            plan["remaining_tp2_usd"] = float(full_tp_usd)
+            return plan
+
+        profit_per_lot_at_tp1 = tp1_full_position_usd / max(original_volume, 1e-9)
+        if profit_per_lot_at_tp1 <= 0.0:
+            plan["enabled"] = False
+            plan["reason"] = "STATIC_TP1_ZERO_PROFIT_PER_LOT"
+            return plan
+
+        requested_close_volume = target_tp1_usd / profit_per_lot_at_tp1
+        plan["requested_close_volume"] = float(max(0.0, requested_close_volume))
+
+        resolve_fn = getattr(self.mt5, "_resolve_partial_volume", None)
+        if not callable(resolve_fn):
+            plan["enabled"] = False
+            plan["reason"] = "STATIC_TP1_VOLUME_RESOLVER_UNAVAILABLE"
+            return plan
+
+        try:
+            volume_check = resolve_fn(symbol=symbol, requested_volume=requested_close_volume, position_volume=position_volume)
+        except TypeError:
+            volume_check = resolve_fn(symbol, requested_close_volume, position_volume)
+        if not bool(volume_check.get("ok", False)):
+            plan["skip_partials"] = bool(fallback_single_tp)
+            plan["reason"] = str(volume_check.get("reason", "STATIC_TP1_VOLUME_REJECTED"))
+            plan["volume_check_reason"] = str(volume_check.get("reason", "STATIC_TP1_VOLUME_REJECTED"))
+            plan["remaining_tp2_usd"] = float(full_tp_usd)
+            return plan
+
+        close_volume = float(volume_check.get("volume", 0.0) or 0.0)
+        remaining_volume = float(volume_check.get("remaining", max(0.0, position_volume - close_volume)) or 0.0)
+        realized_tp1_usd = self._estimate_profit_usd(symbol, side, close_volume, entry_price, tp1_price, symbol_info=symbol_info)
+        remaining_tp2_usd = self._estimate_profit_usd(symbol, side, remaining_volume, entry_price, final_tp_price, symbol_info=symbol_info)
+
+        if remaining_tp2_usd + 1e-9 < min_tp2_remaining_usd and fallback_single_tp:
+            plan["skip_partials"] = True
+            plan["reason"] = "STATIC_TP1_RUNNER_TOO_SMALL_AFTER_ROUNDING"
+            plan["remaining_tp2_usd"] = float(full_tp_usd)
+            return plan
+
+        plan["tp1_target_usd"] = float(realized_tp1_usd)
+        plan["close_volume"] = float(close_volume)
+        plan["remaining_volume"] = float(remaining_volume)
+        plan["remaining_tp2_usd"] = float(remaining_tp2_usd)
+        return plan
+
+    def _final_tp_price_for_position(self, position: dict, open_trade: Optional[dict]) -> float:
+        final_tp_price = 0.0
+        if isinstance(open_trade, dict):
+            final_tp_price = float(open_trade.get("tp_price", 0.0) or 0.0)
+        if final_tp_price <= 0.0:
+            final_tp_price = float(position.get("tp", 0.0) or 0.0)
+        return float(final_tp_price)
 
     def _apply_trade_management_rules(
         self,
@@ -1374,12 +1591,49 @@ class TradingEngine:
         current_sl = float(position.get("sl", 0.0) or 0.0)
         point = float((symbol_info or {}).get("point", 0.0) or 0.0)
         retry_seconds = max(10, int(tm_cfg.get("partial_retry_seconds", 60) or 60))
+        use_static_tp1 = bool(partials_cfg.get("use_static_tp1_usd", False))
+        final_tp_price = self._final_tp_price_for_position(position, open_trade)
+        static_tp1_plan = self._build_static_tp1_plan(
+            position=position,
+            open_trade=open_trade,
+            partials_cfg=partials_cfg,
+            initial_risk=initial_risk,
+            original_volume=original_volume,
+            symbol_info=symbol_info or {},
+        ) if partials_enabled and use_static_tp1 and not tp1_done else {"enabled": False}
 
         if partials_enabled and not tp1_done and r_now >= float(partials_cfg.get("tp1_r", 1.0) or 1.0):
+            if use_static_tp1 and bool(static_tp1_plan.get("skip_partials", False)):
+                tp1_done = True
+                state_dirty = True
+                logger.info(
+                    "TP1_STATIC_FALLBACK_SINGLE_TP: ticket=%s symbol=%s side=%s R=%.2f projected_full_tp_usd=%.2f computed_tp1_target_usd=%.2f computed_tp1_close_volume=%.2f projected_tp2_remaining_usd=%.2f reason=%s",
+                    ticket,
+                    symbol,
+                    side,
+                    r_now,
+                    float(static_tp1_plan.get("full_tp_usd", 0.0) or 0.0),
+                    float(static_tp1_plan.get("tp1_target_usd", 0.0) or 0.0),
+                    float(static_tp1_plan.get("close_volume", 0.0) or 0.0),
+                    float(static_tp1_plan.get("remaining_tp2_usd", 0.0) or 0.0),
+                    str(static_tp1_plan.get("reason", "")),
+                )
             tp1_key = f"{trade_id}:TP1"
             retry_after = float(self._tm_partial_retry_after.get(tp1_key, 0.0) or 0.0)
-            if now_mono >= retry_after:
+            if now_mono >= retry_after and not tp1_done:
                 req_volume = float(position.get("volume", 0.0) or 0.0) * float(partials_cfg.get("tp1_close_pct", 0.60) or 0.60)
+                if use_static_tp1:
+                    if bool(static_tp1_plan.get("enabled", False)) and float(static_tp1_plan.get("close_volume", 0.0) or 0.0) > 0.0:
+                        req_volume = float(static_tp1_plan.get("close_volume", 0.0) or 0.0)
+                    else:
+                        logger.warning(
+                            "TP1_STATIC_PLAN_INVALID_FALLBACK_PCT: ticket=%s symbol=%s side=%s R=%.2f reason=%s",
+                            ticket,
+                            symbol,
+                            side,
+                            r_now,
+                            str(static_tp1_plan.get("reason", "STATIC_TP1_UNAVAILABLE")),
+                        )
                 partial = self.mt5.partial_close_position(ticket, req_volume) if hasattr(self.mt5, "partial_close_position") else {"ok": False, "comment": "PARTIAL_CLOSE_NOT_SUPPORTED"}
                 if bool(partial.get("ok", False)):
                     closed_volume = float(partial.get("closed_volume", 0.0) or 0.0)
@@ -1396,13 +1650,17 @@ class TradingEngine:
                     state_dirty = True
                     self._tm_partial_retry_after.pop(tp1_key, None)
                     logger.info(
-                        "TP1_EXECUTED: ticket=%s symbol=%s side=%s R=%.2f closed_volume=%.2f new_sl=%.5f",
+                        "TP1_EXECUTED: ticket=%s symbol=%s side=%s R=%.2f closed_volume=%.2f new_sl=%.5f projected_full_tp_usd=%.2f computed_tp1_target_usd=%.2f computed_tp1_close_volume=%.2f projected_tp2_remaining_usd=%.2f",
                         ticket,
                         symbol,
                         side,
                         r_now,
                         closed_volume,
                         current_sl,
+                        float(static_tp1_plan.get("full_tp_usd", 0.0) or 0.0) if use_static_tp1 else 0.0,
+                        float(static_tp1_plan.get("tp1_target_usd", 0.0) or 0.0) if use_static_tp1 else 0.0,
+                        float(static_tp1_plan.get("close_volume", 0.0) or 0.0) if use_static_tp1 else req_volume,
+                        float(static_tp1_plan.get("remaining_tp2_usd", 0.0) or 0.0) if use_static_tp1 else 0.0,
                     )
                     if not bool(sl_res.get("ok", False)):
                         logger.warning(
@@ -1446,65 +1704,115 @@ class TradingEngine:
             and not tp2_done
             and r_now >= float(partials_cfg.get("tp2_r", 2.0) or 2.0)
         ):
-            tp2_key = f"{trade_id}:TP2"
-            retry_after = float(self._tm_partial_retry_after.get(tp2_key, 0.0) or 0.0)
-            if now_mono >= retry_after:
-                req_volume = float(original_volume) * float(partials_cfg.get("tp2_close_pct", 0.25) or 0.25)
-                partial = self.mt5.partial_close_position(ticket, req_volume) if hasattr(self.mt5, "partial_close_position") else {"ok": False, "comment": "PARTIAL_CLOSE_NOT_SUPPORTED"}
-                if bool(partial.get("ok", False)):
-                    closed_volume = float(partial.get("closed_volume", 0.0) or 0.0)
-                    tp2_sl = entry_price + (sign * float(partials_cfg.get("tp2_sl_lock_r", 1.0) or 1.0) * initial_risk)
-                    sl_res = self._apply_position_sl(ticket, side, current_sl, tp2_sl, point=point)
-                    if bool(sl_res.get("ok", False)):
-                        current_sl = float(sl_res.get("new_sl", current_sl) or current_sl)
-                        result["sl_updated"] = current_sl
+            if use_static_tp1:
+                runner_remaining_usd = self._estimate_profit_usd(
+                    symbol,
+                    side,
+                    float(position.get("volume", 0.0) or 0.0),
+                    entry_price,
+                    final_tp_price,
+                    symbol_info=symbol_info or {},
+                ) if final_tp_price > 0.0 else 0.0
+                tp2_sl = entry_price + (sign * float(partials_cfg.get("tp2_sl_lock_r", 1.0) or 1.0) * initial_risk)
+                sl_res = self._apply_position_sl(ticket, side, current_sl, tp2_sl, point=point)
+                if bool(sl_res.get("ok", False)):
+                    current_sl = float(sl_res.get("new_sl", current_sl) or current_sl)
+                    result["sl_updated"] = current_sl
                     tp2_done = True
                     state_dirty = True
-                    self._tm_partial_retry_after.pop(tp2_key, None)
                     logger.info(
-                        "TP2_EXECUTED: ticket=%s symbol=%s side=%s R=%.2f closed_volume=%.2f new_sl=%.5f",
+                        "TP2_RUNNER_LOCKED: ticket=%s symbol=%s side=%s R=%.2f remaining_volume=%.2f projected_tp2_remaining_usd=%.2f new_sl=%.5f",
                         ticket,
                         symbol,
                         side,
                         r_now,
-                        closed_volume,
+                        float(position.get("volume", 0.0) or 0.0),
+                        float(runner_remaining_usd),
                         current_sl,
                     )
-                    if not bool(sl_res.get("ok", False)):
-                        logger.warning(
-                            "TP2_LOCK_REJECTED: ticket=%s symbol=%s side=%s target_sl=%.5f retcode=%s broker_error=%s",
-                            ticket,
-                            symbol,
-                            side,
-                            tp2_sl,
-                            sl_res.get("retcode"),
-                            str(sl_res.get("comment", "")) or str(sl_res.get("last_error", "")),
-                        )
+                elif str(sl_res.get("reason", "")) == "not_tightening":
+                    tp2_done = True
+                    state_dirty = True
+                    logger.info(
+                        "TP2_RUNNER_LOCK_ALREADY_SATISFIED: ticket=%s symbol=%s side=%s R=%.2f current_sl=%.5f projected_tp2_remaining_usd=%.2f",
+                        ticket,
+                        symbol,
+                        side,
+                        r_now,
+                        current_sl,
+                        float(runner_remaining_usd),
+                    )
                 else:
-                    reason = str(partial.get("comment", "PARTIAL_REJECTED"))
-                    self._tm_partial_retry_after[tp2_key] = now_mono + retry_seconds
-                    if self._is_permanent_partial_reject(reason):
+                    logger.warning(
+                        "TP2_RUNNER_LOCK_REJECTED: ticket=%s symbol=%s side=%s R=%.2f target_sl=%.5f retcode=%s broker_error=%s",
+                        ticket,
+                        symbol,
+                        side,
+                        r_now,
+                        tp2_sl,
+                        sl_res.get("retcode"),
+                        str(sl_res.get("comment", "")) or str(sl_res.get("last_error", "")),
+                    )
+            else:
+                tp2_key = f"{trade_id}:TP2"
+                retry_after = float(self._tm_partial_retry_after.get(tp2_key, 0.0) or 0.0)
+                if now_mono >= retry_after:
+                    req_volume = float(original_volume) * float(partials_cfg.get("tp2_close_pct", 0.25) or 0.25)
+                    partial = self.mt5.partial_close_position(ticket, req_volume) if hasattr(self.mt5, "partial_close_position") else {"ok": False, "comment": "PARTIAL_CLOSE_NOT_SUPPORTED"}
+                    if bool(partial.get("ok", False)):
+                        closed_volume = float(partial.get("closed_volume", 0.0) or 0.0)
+                        tp2_sl = entry_price + (sign * float(partials_cfg.get("tp2_sl_lock_r", 1.0) or 1.0) * initial_risk)
+                        sl_res = self._apply_position_sl(ticket, side, current_sl, tp2_sl, point=point)
+                        if bool(sl_res.get("ok", False)):
+                            current_sl = float(sl_res.get("new_sl", current_sl) or current_sl)
+                            result["sl_updated"] = current_sl
                         tp2_done = True
                         state_dirty = True
-                        logger.warning(
-                            "TP2_SKIPPED_VOLUME: ticket=%s symbol=%s side=%s R=%.2f reason=%s",
+                        self._tm_partial_retry_after.pop(tp2_key, None)
+                        logger.info(
+                            "TP2_EXECUTED: ticket=%s symbol=%s side=%s R=%.2f closed_volume=%.2f new_sl=%.5f",
                             ticket,
                             symbol,
                             side,
                             r_now,
-                            reason,
+                            closed_volume,
+                            current_sl,
                         )
+                        if not bool(sl_res.get("ok", False)):
+                            logger.warning(
+                                "TP2_LOCK_REJECTED: ticket=%s symbol=%s side=%s target_sl=%.5f retcode=%s broker_error=%s",
+                                ticket,
+                                symbol,
+                                side,
+                                tp2_sl,
+                                sl_res.get("retcode"),
+                                str(sl_res.get("comment", "")) or str(sl_res.get("last_error", "")),
+                            )
                     else:
-                        logger.warning(
-                            "TP2_REJECTED: ticket=%s symbol=%s side=%s R=%.2f retcode=%s reason=%s broker_error=%s",
-                            ticket,
-                            symbol,
-                            side,
-                            r_now,
-                            partial.get("retcode"),
-                            reason,
-                            str(partial.get("last_error", "")),
-                        )
+                        reason = str(partial.get("comment", "PARTIAL_REJECTED"))
+                        self._tm_partial_retry_after[tp2_key] = now_mono + retry_seconds
+                        if self._is_permanent_partial_reject(reason):
+                            tp2_done = True
+                            state_dirty = True
+                            logger.warning(
+                                "TP2_SKIPPED_VOLUME: ticket=%s symbol=%s side=%s R=%.2f reason=%s",
+                                ticket,
+                                symbol,
+                                side,
+                                r_now,
+                                reason,
+                            )
+                        else:
+                            logger.warning(
+                                "TP2_REJECTED: ticket=%s symbol=%s side=%s R=%.2f retcode=%s reason=%s broker_error=%s",
+                                ticket,
+                                symbol,
+                                side,
+                                r_now,
+                                partial.get("retcode"),
+                                reason,
+                                str(partial.get("last_error", "")),
+                            )
 
         if giveback_enabled:
             activate_at_r = float(giveback_cfg.get("activate_at_r", 1.2) or 1.2)

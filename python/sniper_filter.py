@@ -1,3 +1,25 @@
+"""
+Sniper Filter — High-Precision Trade Entry Gate
+═══════════════════════════════════════════════
+Active when execution.profile = "SNIPER" or "PROP_CHALLENGE".
+This is the STRICTEST quality filter in the pipeline — it sits between
+ICTStrategy (signal generation) and actual order execution.
+
+Checks (in order):
+    1. R:R floor        — Hard minimum reward-to-risk ratio (e.g. 1.3:1)
+    2. SL cap           — Maximum stop-loss in pips (with optional soft cap + buffer)
+    3. Entry distance   — How far price has moved since the setup formed
+    4. Premium/Discount — Must buy in discount zone, sell in premium zone
+    5. Displacement     — Requires a strong candle body (ATR-based) confirming direction
+    6. Chop detection   — Blocks entries in low-volatility ranging markets
+    7. Reversal gate    — Extra conditions required to trade against HTF bias
+    8. Kill zone enforcement — Only trade during London Open, NY Open, London Close
+    9. Per-symbol/KZ limits — One trade per symbol per kill zone window
+
+Each check returns (pass/fail, reason, SniperMetrics) for full audit logging.
+The SniperMetrics dataclass carries all computed values downstream.
+"""
+
 from __future__ import annotations
 
 import logging

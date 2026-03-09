@@ -1,0 +1,30 @@
+{
+    "_comment": "Backtest-specific config — inherits from main settings.json and overrides specific values for backtesting",
+    "inherit_from_main": true,
+    "backtest_notes": "This config is loaded by run_backtest.py. It merges with settings.json, so you only need to specify overrides here.",
+    "disabled_setups": [
+        "PIN_BAR"
+    ],
+    "_disabled_setups_note": "PIN_BAR had 14.3% WR and -175.6 pips in backtest — worst performing setup",
+    "execution": {
+        "enforce_killzones": true,
+        "_killzone_note": "60% of trades were in DEAD_ZONE with near-breakeven results — enforce KZ to filter noise"
+    },
+    "news": {
+        "enabled": false,
+        "_comment": "Disable news filter during backtesting (we don't have historical news data)"
+    },
+    "notifications": {
+        "enabled": false,
+        "_comment": "No Telegram/email alerts during backtesting"
+    },
+    "risk": {
+        "max_open_trades": 3,
+        "max_daily_trades": 10000,
+        "max_daily_loss_pct": 99.0,
+        "_comment": "Relaxed risk limits for backtesting — we want to see all possible trades"
+    },
+    "test_mode": {
+        "enabled": false
+    }
+}

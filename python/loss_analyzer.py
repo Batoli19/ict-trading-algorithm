@@ -1,9 +1,30 @@
 
 """
-Deterministic adaptive learning for post-loss analysis.
+Loss Analyzer — Deterministic Adaptive Learning System
+═════════════════════════════════════════════════════
+Analyzes every losing trade to find patterns and create rules that
+prevent the same mistakes from repeating.
 
-Phase 1 (observe): analyze losses, persist lessons and candidate rules, no entry blocking.
-Phase 2 (controlled): optional rule-based entry blocking behind strict config gates.
+Two-phase approach:
+    Phase 1 (OBSERVE):    Analyze losses, persist lessons and candidate rules,
+                          but do NOT block any entries. Safe to run immediately.
+    Phase 2 (CONTROLLED): Optionally block entries when adaptive rules match,
+                          behind strict config gates. Only enabled when you're
+                          confident the rules are well-calibrated.
+
+How it works:
+    1. After a loss, scan for OPPOSING signals that were present at entry time
+       (e.g., if we went BUY but there was a bearish FVG + stop hunt forming)
+    2. If 2+ opposing signals existed, create a CANDIDATE avoidance rule
+    3. Over time, validate candidates: if precision > 65% with 10+ samples,
+       promote to ACTIVE. Otherwise, disable.
+    4. In Phase 2, ACTIVE rules can block future entries when the same
+       opposing pattern appears.
+
+Rule lifecycle: CANDIDATE → ACTIVE → DISABLED (or expired via TTL)
+
+The system uses either SharedLearningDB (global) or TradingMemoryDB (local)
+as its backing store, preferring shared when available.
 """
 
 from __future__ import annotations

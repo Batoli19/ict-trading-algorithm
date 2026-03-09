@@ -1,25 +1,33 @@
 {
   "mt5": {
-    "login":    5047375529,
-    "password":  "8d_bYlWt",
-    "server":   "MetaQuotes-Demo",
-    "timeout":  10000
+    "login": 5047375529,
+    "password": "8d_bYlWt",
+    "server": "MetaQuotes-Demo",
+    "timeout": 10000
   },
-
- 
-
-
-  "pairs": ["EURUSD", "USDJPY", "USDCHF", "GBPUSD", "AUDUSD"],
-
+  "pairs": [
+    "USDJPY",
+    "USDCHF",
+    "GBPUSD",
+    "GBPJPY",
+    "AUDUSD",
+    "XAUUSD"
+  ],
   "timeframes": {
-    "bias":   "H4",
-    "entry":  "M15",
-    "trigger":"M5"
+    "bias": "H4",
+    "entry": "M15",
+    "trigger": "M5"
   },
-
   "mode": {
     "type": "hybrid",
-    "pairs_focus": ["EURUSD", "USDJPY", "USDCHF", "GBPUSD", "AUDUSD"],
+    "pairs_focus": [
+      "USDJPY",
+      "USDCHF",
+      "GBPUSD",
+      "GBPJPY",
+      "AUDUSD",
+      "XAUUSD"
+    ],
     "session_pair_rules": false,
     "cooldown": {
       "per_symbol_seconds": 0,
@@ -28,10 +36,11 @@
       "global_after_loss_seconds": 0
     }
   },
-
   "execution": {
     "profile": "normal",
-    "force_enable_setups": ["FVG"],
+    "force_enable_setups": [
+      "FVG"
+    ],
     "min_confidence": 0.68,
     "min_rr": 1.6,
     "rr_epsilon": 0.02,
@@ -79,14 +88,14 @@
     "max_overlap_pct": 0.65,
     "one_trade_per_symbol_per_killzone": true,
     "reentry_requires_new_setup": true,
-    "enforce_killzones": false,
+    "enforce_killzones": true,
     "per_symbol": {
       "XAUUSD": {
-        "min_rr": 1.6,
-        "max_sl_pips": 60.0,
+        "min_rr": 2.0,
+        "max_sl_pips": 40.0,
         "max_entry_distance_pips": 30.0,
         "require_discount_premium": true,
-        "allow_ob_premium_override": true,
+        "allow_ob_premium_override": false,
         "avoid_chop": false,
         "max_overlap_pct": 0.62
       },
@@ -98,10 +107,18 @@
         "allow_ob_premium_override": false,
         "avoid_chop": false,
         "max_overlap_pct": 0.65
+      },
+      "GBPJPY": {
+        "min_rr": 1.8,
+        "max_sl_pips": 25.0,
+        "max_entry_distance_pips": 8.0,
+        "require_discount_premium": true,
+        "allow_ob_premium_override": true,
+        "avoid_chop": false,
+        "max_overlap_pct": 0.62
       }
     }
   },
-
   "trailing_structure": {
     "enabled": true,
     "fractal_left": 2,
@@ -115,9 +132,9 @@
     "allow_ob_trail": true,
     "ob_min_impulse_atr_mult": 0.8,
     "be_enabled": true,
-    "be_min_profit_pips": 6.0,
-    "be_trigger_r_multiple": 0.6,
-    "be_buffer_pips": 0.8,
+    "be_min_profit_pips": 15.0,
+    "be_trigger_r_multiple": 1.0,
+    "be_buffer_pips": 2.0,
     "lock_be_as_floor": true,
     "per_symbol": {
       "EURUSD": {
@@ -128,27 +145,43 @@
         "min_swing_atr_mult": 0.2,
         "allow_ob_trail": true,
         "be_enabled": true,
-        "be_min_profit_pips": 6.0,
-        "be_trigger_r_multiple": 0.6,
-        "be_buffer_pips": 0.8,
+        "be_min_profit_pips": 15.0,
+        "be_trigger_r_multiple": 1.0,
+        "be_buffer_pips": 2.0,
+        "lock_be_as_floor": true
+      },
+      "GBPJPY": {
+        "fractal_left": 2,
+        "fractal_right": 2,
+        "swing_buffer_pips": 1.5,
+        "min_swing_pips": 3.0,
+        "min_swing_atr_mult": 0.25,
+        "allow_ob_trail": true,
+        "ob_min_impulse_atr_mult": 0.9,
+        "be_enabled": true,
+        "be_min_profit_pips": 20.0,
+        "be_trigger_r_multiple": 1.0,
+        "be_buffer_pips": 2.5,
         "lock_be_as_floor": true
       },
       "XAUUSD": {
         "fractal_left": 3,
         "fractal_right": 3,
-        "swing_buffer_pips": 2.0,
-        "min_swing_pips": 2.0,
-        "min_swing_atr_mult": 0.25,
+        "swing_buffer_pips": 5.0,
+        "min_swing_pips": 10.0,
+        "min_swing_atr_mult": 0.3,
         "allow_ob_trail": true,
+        "ob_min_impulse_atr_mult": 1.0,
         "be_enabled": true,
-        "be_min_profit_pips": 6.0,
-        "be_trigger_r_multiple": 0.6,
-        "be_buffer_pips": 0.8,
-        "lock_be_as_floor": true
+        "be_min_profit_pips": 30.0,
+        "be_trigger_r_multiple": 0.8,
+        "be_buffer_pips": 3.0,
+        "lock_be_as_floor": true,
+        "swing_tf": "M5",
+        "trailing_tf": "M5"
       }
     }
   },
-
   "trade_management": {
     "partials": {
       "enabled": true,
@@ -160,7 +193,13 @@
       "tp2_r": 2.0,
       "tp2_close_pct": 0.25,
       "tp2_sl_lock_r": 1.0,
-      "trail_only_after_tp1": true
+      "trail_only_after_tp1": true,
+      "use_static_tp1_usd": true,
+      "tp1_static_usd": 55.0,
+      "tp1_static_usd_min": 50.0,
+      "tp1_static_usd_max": 60.0,
+      "min_tp2_remaining_usd": 25.0,
+      "fallback_to_single_tp_if_small_trade": true
     },
     "giveback_guard": {
       "enabled": true,
@@ -173,31 +212,26 @@
     },
     "partial_retry_seconds": 60
   },
-
   "entry_distance_limit": {
     "EURUSD": 3,
     "GBPUSD": 3,
     "USDJPY": 4,
     "XAUUSD": 30
   },
-
   "reversal_gate": {
     "require_sweep": true,
     "require_mss": true,
     "min_conditions_required": 2
   },
-
   "htf_bias_control": {
     "enabled": true,
     "reduce_risk_on_conflict": true,
     "block_on_strong_conflict": false
   },
-
   "displacement": {
     "atr_multiplier": 1.5,
     "require_close_beyond_structure": true
   },
-
   "prop_guardrails": {
     "enabled": false,
     "daily_profit_lock_pct": 0.0,
@@ -208,7 +242,6 @@
     "max_total_open_risk_pct": 1.5,
     "close_all_on_daily_loss_breach": true
   },
-
   "correlation": {
     "enabled": false,
     "max_same_thesis_open": 99,
@@ -219,9 +252,18 @@
     "loss_window_seconds": 3600,
     "block_opposite_thesis": false,
     "dangerous_pairs": [
-      ["EURUSD", "GBPUSD"],
-      ["EURUSD", "USDCHF"],
-      ["GBPUSD", "USDCHF"]
+      [
+        "EURUSD",
+        "GBPUSD"
+      ],
+      [
+        "EURUSD",
+        "USDCHF"
+      ],
+      [
+        "GBPUSD",
+        "USDCHF"
+      ]
     ],
     "medium_pair_scale": {
       "EURUSD|AUDUSD": 0.65,
@@ -229,7 +271,6 @@
     },
     "thesis_groups": {}
   },
-
   "adaptive_learning": {
     "enabled": true,
     "phase": 2,
@@ -244,7 +285,6 @@
     "cooldown_seconds_after_new_rule": 1800,
     "shadow_mode": true
   },
-
   "chop_filter": {
     "enabled": true,
     "atr_period": 14,
@@ -258,51 +298,52 @@
     "asia_max_overlap_pct": 0.6,
     "allow_range_reversal_extremes_only": true
   },
-
   "risk": {
-  "risk_per_trade_pct": 1.5,
-  "max_open_trades": 3,
-  "max_cumulative_loss_pct": 99,
-  "max_consecutive_losses": 0,
-  "loss_streak_cooldown_minutes": 0,
-  "max_trades_per_symbol_per_hour": 999,
-  "max_loss_trades_per_symbol_per_hour": 999,
-  "cooldown_win_minutes": 10,
-  "cooldown_loss_minutes": 45,
-  "cooldown_global_minutes": 3,
-  "loss_streak_threshold": 2,
-  "loss_streak_minutes": 120,
-  "equity_dd_pause_pct": 3.0,
-  "equity_dd_pause_minutes": 120,
-  "equity_dd_stop_pct": 5.0,
-  "xauusd_max_trades_per_day": 50,
-  "max_total_open_risk_pct": 3.0,
-  "max_daily_loss_pct": 99.0,
-  "max_daily_trades": 10000,
-  "daily_profit_target_usd": 1000000000,
-  "rr_ratio": 2.0,
-  "trailing_stop": true,
-  "trailing_stop_pips": 0,
-  "max_risk_per_trade_usd": 50,
-  "slippage_buffer_pct": 0.10,
-  "min_rr_for_high_risk": 2.0,
-  "tp_miss_protection_pips": 2,
-  "tp_miss_protection": {
-    "enabled": true,
-    "near_tp_pips": 2.0,
-    "lock_pct": 0.9,
-    "min_lock_pips": 1.0,
-    "spread_guard": true,
-    "max_spread_pips": 3.0,
-    "once_per_position": false
-  }
-
+    "risk_per_trade_pct": 1.5,
+    "max_open_trades": 3,
+    "max_cumulative_loss_pct": 99,
+    "max_consecutive_losses": 0,
+    "loss_streak_cooldown_minutes": 0,
+    "max_trades_per_symbol_per_hour": 999,
+    "max_loss_trades_per_symbol_per_hour": 999,
+    "cooldown_win_minutes": 10,
+    "cooldown_loss_minutes": 45,
+    "cooldown_global_minutes": 3,
+    "loss_streak_threshold": 2,
+    "loss_streak_minutes": 120,
+    "equity_dd_pause_pct": 3.0,
+    "equity_dd_pause_minutes": 120,
+    "equity_dd_stop_pct": 5.0,
+    "xauusd_max_trades_per_day": 50,
+    "max_total_open_risk_pct": 3.0,
+    "max_daily_loss_pct": 99.0,
+    "max_daily_trades": 10000,
+    "daily_profit_target_usd": 1000000000,
+    "rr_ratio": 2.0,
+    "trailing_stop": true,
+    "trailing_stop_pips": 0,
+    "max_risk_per_trade_usd": 50,
+    "slippage_buffer_pct": 0.10,
+    "min_rr_for_high_risk": 2.0,
+    "tp_miss_protection_pips": 2,
+    "tp_miss_protection": {
+      "enabled": true,
+      "near_tp_pips": 2.0,
+      "lock_pct": 0.9,
+      "min_lock_pips": 1.0,
+      "spread_guard": true,
+      "max_spread_pips": 3.0,
+      "once_per_position": false
+    }
   },
-
   "hybrid": {
     "enabled": true,
     "trade_only_in_kill_zones": false,
-    "allowed_kill_zones": ["LONDON_OPEN", "NY_OPEN", "LONDON_CLOSE"],
+    "allowed_kill_zones": [
+      "LONDON_OPEN",
+      "NY_OPEN",
+      "LONDON_CLOSE"
+    ],
     "min_rr": 1.6,
     "min_confidence": 0.65,
     "cooldown_after_close_seconds": 0,
@@ -315,81 +356,92 @@
     "block_reentry_same_direction": true,
     "reentry_requires_new_setup": true
   },
-
   "ict": {
     "fvg": {
-      "enabled":          true,
-      "min_gap_pips":     2,
+      "enabled": true,
+      "min_gap_pips": 2,
       "mitigation_entry": true
     },
     "turtle_soup": {
-      "enabled":          true,
+      "enabled": true,
       "lookback_candles": 20,
       "confirmation_pips": 3
     },
     "stop_hunt": {
-      "enabled":          true,
+      "enabled": true,
       "equal_hl_tolerance": 5,
       "displacement_min_pips": 5
     },
     "kill_zones": {
       "enabled": true,
-      "london_open":    { "start": "07:00", "end": "10:00", "tz": "UTC" },
-      "ny_open":        { "start": "12:00", "end": "15:00", "tz": "UTC" },
-      "london_close":   { "start": "15:00", "end": "17:00", "tz": "UTC" },
+      "london_open": {
+        "start": "07:00",
+        "end": "10:00",
+        "tz": "UTC"
+      },
+      "ny_open": {
+        "start": "12:00",
+        "end": "15:00",
+        "tz": "UTC"
+      },
+      "london_close": {
+        "start": "15:00",
+        "end": "17:00",
+        "tz": "UTC"
+      },
       "trade_only_in_kill_zones": false,
       "comment": "Kill zones now give +10% confidence bonus instead of blocking trades"
     },
     "order_blocks": {
-      "enabled":     true,
+      "enabled": true,
       "min_impulse_pips": 5
     }
   },
-
   "scalping": {
-    "enabled":       true,
-    "timeframe":     "M1",
+    "enabled": true,
+    "timeframe": "M1",
     "max_spread_pips": 2.0,
     "quick_tp_pips": 10,
     "quick_sl_pips": 6
   },
-
   "news": {
-    "enabled":       true,
-    "provider":      "forexfactory",
+    "enabled": true,
+    "provider": "forexfactory",
     "avoid_minutes_before": 30,
-    "avoid_minutes_after":  15,
-    "impact_levels": ["HIGH"],
-    "currencies":    ["USD", "EUR", "GBP"]
+    "avoid_minutes_after": 15,
+    "impact_levels": [
+      "HIGH"
+    ],
+    "currencies": [
+      "USD",
+      "EUR",
+      "GBP"
+    ]
   },
-
   "notifications": {
-    "enabled":       true,
+    "enabled": true,
     "telegram": {
-      "enabled":     false,
-      "bot_token":   "YOUR_TELEGRAM_BOT_TOKEN",
-      "chat_id":     "YOUR_CHAT_ID"
+      "enabled": false,
+      "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+      "chat_id": "YOUR_CHAT_ID"
     },
     "email": {
-      "enabled":     false,
+      "enabled": false,
       "smtp_server": "smtp.gmail.com",
-      "smtp_port":   587,
-      "username":    "your@email.com",
-      "password":    "YOUR_EMAIL_PASSWORD",
-      "recipient":   "your@email.com"
+      "smtp_port": 587,
+      "username": "your@email.com",
+      "password": "YOUR_EMAIL_PASSWORD",
+      "recipient": "your@email.com"
     }
   },
-
   "dashboard": {
     "refresh_seconds": 5,
-    "show_pnl":        true,
-    "show_signals":    true
+    "show_pnl": true,
+    "show_signals": true
   },
-
   "test_mode": {
-    "enabled":           false,
-    "interval_seconds":  300,
-    "comment":           "Test mode disabled - using live ICT strategy"
+    "enabled": false,
+    "interval_seconds": 300,
+    "comment": "Test mode disabled - using live ICT strategy"
   }
 }
-

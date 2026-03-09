@@ -1,13 +1,25 @@
 """
 Trading Brain — AI Learning System
-───────────────────────────────────
-Analyzes every trade to:
-  • Determine WHY losses happened
-  • Learn patterns from wins
-  • Adjust strategy parameters
-  • Provide reasoning for confidence scores
-  
-This is the bot's intelligence layer.
+═══════════════════════════════════
+The "intelligence layer" that learns from every trade the bot takes.
+
+Key responsibilities:
+    1. ENTRY ANALYSIS:  Before taking a trade, analyze WHY we should take it.
+       Examines H4 trend, M15 structure (premium/discount zone), and setup-
+       specific conditions. This reasoning is stored in the trade memory.
+
+    2. EXIT ANALYSIS:   After a trade closes, determine WHY it won or lost.
+       Checks for wicks/spikes, counter-trend momentum, abnormal volume.
+       Generates specific lessons (e.g., "consider wider stop near news").
+
+    3. ADAPTIVE CONFIDENCE: Adjusts confidence based on REAL historical
+       win rates. If a setup starts losing more often, confidence drops.
+       If a single loss pattern dominates (>50% of losses), extra penalty.
+
+    4. SETUP DISABLING:  If a setup has 50+ trades with <60% confidence,
+       the brain can recommend disabling it entirely.
+
+Data source: TradingMemoryDB (SQLite) — all analysis reads from trade history.
 """
 
 import logging
@@ -18,7 +30,22 @@ logger = logging.getLogger("BRAIN")
 
 
 class TradingBrain:
+    """
+    The bot's learning and analysis engine.
+
+    Called at two key points:
+        1. BEFORE entry: analyze_entry_conditions() provides reasoning
+        2. AFTER exit:   analyze_exit() determines why the trade won/lost
+
+    Also provides adaptive confidence via get_adaptive_confidence().
+    """
+
     def __init__(self, memory_db, config: Optional[dict] = None):
+        """
+        Args:
+            memory_db: TradingMemoryDB instance for reading trade history
+            config:    Full bot config dict (used for force_enable_setups)
+        """
         self.memory = memory_db
         self.config = config or {}
         
@@ -33,7 +60,9 @@ class TradingBrain:
         conditions_met = []
         reasoning_parts = []
         
-        # Analyze HTF context
+        # ─── H4 Trend Analysis ────────────────────────────────────────
+        # Count bullish vs bearish candles in last 10 H4 bars.
+        # 7+ in one direction = strong trend (ICT "HTF bias").
         if len(candles_h4) >= 30:
             recent_h4 = candles_h4[-10:]
             trend_up = sum(1 for c in recent_h4 if c["close"] > c["open"]) > 6
@@ -49,7 +78,8 @@ class TradingBrain:
                 conditions_met.append("H4 ranging/choppy")
                 reasoning_parts.append("Neutral H4, relying on M15 structure")
         
-        # Analyze M15 structure
+        # ─── M15 Premium/Discount Zone Analysis ──────────────────────
+        # ICT concept: lower 30% of range = discount (buy), upper 30% = premium (sell)
         if len(candles_m15) >= 20:
             recent_m15 = candles_m15[-20:]
             swing_high = max(c["high"] for c in recent_m15)
@@ -70,7 +100,8 @@ class TradingBrain:
             else:
                 conditions_met.append(f"Price in equilibrium ({position_in_range:.0f}% of range)")
         
-        # Setup-specific analysis
+        # ─── Setup-Specific Reasoning ─────────────────────────────────
+        # Each ICT setup has a different thesis for why the trade works
         if setup_type == "FVG":
             conditions_met.append("Fair Value Gap identified on M15")
             reasoning_parts.append("FVG provides imbalance to fill")
@@ -316,6 +347,7 @@ class TradingBrain:
         return "\n".join(report)
     
     def _get_pip_size(self, symbol: str) -> float:
+        """Get pip size for PnL calculations. JPY=0.01, indices=1.0, gold=0.1, FX=0.0001."""
         if "JPY" in symbol:
             return 0.01
         if symbol in ("US30", "NAS100", "SPX500"):

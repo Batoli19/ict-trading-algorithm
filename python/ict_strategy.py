@@ -86,11 +86,18 @@ class Signal:
 
 class ICTStrategy:
     def __init__(self, config: dict):
+        self.root_config = config
         self.cfg = config["ict"]
         self.scalp_cfg = config.get("scalping", {})
         self.pip_size = {}  # per symbol cache
 
     # ── Utilities ────────────────────────────────────────────────────────────
+
+
+    def get_min_rr(self, symbol: str, default: float = 2.0) -> float:
+        exec_cfg = self.root_config.get("execution", {})
+        per_sym = exec_cfg.get("per_symbol", {}).get(symbol, {})
+        return float(per_sym.get("min_rr", exec_cfg.get("min_rr", default)))
 
     def get_pip_size(self, symbol: str) -> float:
         if symbol in self.pip_size:
@@ -263,7 +270,7 @@ class ICTStrategy:
             return None
 
         current_price = candles[-1]["close"]
-        rr = self.cfg.get("rr_ratio", 2.0)
+        rr = self.get_min_rr(symbol, 2.0)
 
         for z in reversed(zones):
             if z.direction != bias:
@@ -328,7 +335,7 @@ class ICTStrategy:
         ):
             sl_price = prev_2["low"] - self.from_pips(3, symbol)
             risk = last["close"] - sl_price
-            tp_price = last["close"] + (risk * 2.0)
+            tp_price = last["close"] + (risk * self.get_min_rr(symbol, 2.0))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BULLISH,
@@ -348,7 +355,7 @@ class ICTStrategy:
         ):
             sl_price = prev_2["high"] + self.from_pips(3, symbol)
             risk = sl_price - last["close"]
-            tp_price = last["close"] - (risk * 2.0)
+            tp_price = last["close"] - (risk * self.get_min_rr(symbol, 2.0))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BEARISH,
@@ -397,7 +404,7 @@ class ICTStrategy:
         ):
             sl_price = prev["low"] - self.from_pips(5, symbol)
             risk = last["close"] - sl_price
-            tp_price = last["close"] + (risk * 2.5)
+            tp_price = last["close"] + (risk * self.get_min_rr(symbol, 2.5))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BULLISH,
@@ -421,7 +428,7 @@ class ICTStrategy:
         ):
             sl_price = prev["high"] + self.from_pips(5, symbol)
             risk = sl_price - last["close"]
-            tp_price = last["close"] - (risk * 2.5)
+            tp_price = last["close"] - (risk * self.get_min_rr(symbol, 2.5))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BEARISH,
@@ -495,7 +502,7 @@ class ICTStrategy:
             if ob.bottom <= price <= ob.top:
                 if ob.direction == Direction.BULLISH:
                     sl = ob.bottom - self.from_pips(5, symbol)
-                    tp = price + (price - sl) * 2.0
+                    tp = price + (price - sl) * self.get_min_rr(symbol, 2.0)
                     return Signal(
                         symbol=symbol,
                         direction=Direction.BULLISH,
@@ -508,7 +515,7 @@ class ICTStrategy:
                     )
                 else:
                     sl = ob.top + self.from_pips(5, symbol)
-                    tp = price - (sl - price) * 2.0
+                    tp = price - (sl - price) * self.get_min_rr(symbol, 2.0)
                     return Signal(
                         symbol=symbol,
                         direction=Direction.BEARISH,
@@ -595,7 +602,7 @@ class ICTStrategy:
         ):
             sl_price = last["low"] - self.from_pips(3, symbol)
             risk = last["close"] - sl_price
-            tp_price = last["close"] + (risk * 2.5)
+            tp_price = last["close"] + (risk * self.get_min_rr(symbol, 2.5))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BULLISH,
@@ -619,7 +626,7 @@ class ICTStrategy:
         ):
             sl_price = last["high"] + self.from_pips(3, symbol)
             risk = sl_price - last["close"]
-            tp_price = last["close"] - (risk * 2.5)
+            tp_price = last["close"] - (risk * self.get_min_rr(symbol, 2.5))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BEARISH,
@@ -657,7 +664,7 @@ class ICTStrategy:
         ):
             sl_price = last["low"] - self.from_pips(2, symbol)
             risk = last["close"] - sl_price
-            tp_price = last["close"] + (risk * 2.0)
+            tp_price = last["close"] + (risk * self.get_min_rr(symbol, 2.0))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BULLISH,
@@ -679,7 +686,7 @@ class ICTStrategy:
         ):
             sl_price = last["high"] + self.from_pips(2, symbol)
             risk = sl_price - last["close"]
-            tp_price = last["close"] - (risk * 2.0)
+            tp_price = last["close"] - (risk * self.get_min_rr(symbol, 2.0))
             return Signal(
                 symbol=symbol,
                 direction=Direction.BEARISH,
@@ -782,7 +789,7 @@ class ICTStrategy:
             if lower_wick > body * 1.2 and last["close"] > last["open"]:
                 sl_price = last["low"] - self.from_pips(7, symbol)
                 risk = last["close"] - sl_price
-                tp_price = last["close"] + (risk * 2.2)
+                tp_price = last["close"] + (risk * self.get_min_rr(symbol, 2.2))
                 return Signal(
                     symbol=symbol,
                     direction=Direction.BULLISH,
@@ -803,7 +810,7 @@ class ICTStrategy:
             if upper_wick > body * 1.2 and last["close"] < last["open"]:
                 sl_price = last["high"] + self.from_pips(7, symbol)
                 risk = sl_price - last["close"]
-                tp_price = last["close"] - (risk * 2.2)
+                tp_price = last["close"] - (risk * self.get_min_rr(symbol, 2.2))
                 return Signal(
                     symbol=symbol,
                     direction=Direction.BEARISH,

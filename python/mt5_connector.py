@@ -1,11 +1,18 @@
 """
-MT5 Connector
+MT5 Connector — MetaTrader 5 Bridge
+═══════════════════════════════════
+The interface between the Python bot and MetaTrader 5 terminal.
+All communication with MT5 goes through this class.
 
-Handles all communication with MetaTrader 5:
-   Connection management (auto-reconnect)
-   Market data retrieval (OHLCV, tick, spread)
-   Order placement / modification / closure
-   Account info & position tracking
+Responsibilities:
+    CONNECTION:     Initialize MT5, login, auto-reconnect on failure (up to 5 retries)
+    DATA RETRIEVAL: Get candles (OHLCV), ticks, spread, account info, symbol specs
+    ORDER MGMT:     Place market/limit orders, modify SL/TP, close/partial-close positions
+    POSITION MGMT:  List open positions, get today's trades, query deal history
+
+Magic number 20250101 tags all bot-managed trades for easy identification.
+
+Note: Requires the MetaTrader 5 desktop terminal to be running on Windows.
 """
 
 import time
@@ -213,6 +220,41 @@ class MT5Connector:
             return abs(float(profit or 0.0))
         except Exception:
             return 0.0
+
+    def estimate_profit_usd(
+        self,
+        symbol: str,
+        side: str,
+        volume: float,
+        open_price: float,
+        close_price: float,
+        symbol_info: Optional[dict] = None,
+    ) -> float:
+        self.ensure_connected()
+        sym = str(symbol or "").upper().strip()
+        direction = str(side or "").upper().strip()
+        qty = float(volume or 0.0)
+        entry = float(open_price or 0.0)
+        exit_price = float(close_price or 0.0)
+        if not sym or direction not in ("BUY", "SELL") or qty <= 0.0 or entry <= 0.0 or exit_price <= 0.0:
+            return 0.0
+
+        order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+        try:
+            profit = mt5.order_calc_profit(order_type, sym, qty, entry, exit_price)
+            if profit is not None:
+                return float(profit or 0.0)
+        except Exception:
+            pass
+
+        info = symbol_info or self.get_symbol_info(sym) or {}
+        tick_value = float(info.get("trade_tick_value", 0.0) or 0.0)
+        tick_size = float(info.get("trade_tick_size", 0.0) or info.get("point", 0.0) or 0.0)
+        if tick_value <= 0.0 or tick_size <= 0.0:
+            return 0.0
+
+        price_delta = (exit_price - entry) if direction == "BUY" else (entry - exit_price)
+        return float((price_delta / tick_size) * tick_value * qty)
 
     #  Orders 
     def place_market_order(self, symbol: str, order_type: str,
