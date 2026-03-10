@@ -412,7 +412,7 @@ def _validate(config: dict):
     if enforce_kz and not bool(kz.get("enabled", False)):
         logger.warning("Kill zones enforcement is ON but ict.kill_zones.enabled is false.")
 
-    hhmm = re.compile(r"^(?:[01]\\d|2[0-3]):[0-5]\\d$")
+    hhmm = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     for name in ("london_open", "ny_open", "london_close"):
         section = kz.get(name)
         if not isinstance(section, dict):
