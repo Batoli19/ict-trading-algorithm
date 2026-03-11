@@ -1,0 +1,128 @@
+{
+  "A": {
+    "count": 5,
+    "wr": 40.0,
+    "pf": 0.43701996927803377,
+    "pips": -58.64000000000001,
+    "expectancy": -11.728000000000002,
+    "avg_win": 22.759999999999998,
+    "avg_loss": 34.72,
+    "setups": {
+      "LIQUIDITY_SWEEP_REVERSAL": {
+        "count": 1,
+        "pips": -26.1
+      },
+      "CHOCH": {
+        "count": 4,
+        "pips": -32.540000000000006
+      }
+    },
+    "exits": {
+      "SL_HIT": {
+        "count": 3,
+        "pips": -104.16
+      },
+      "TRAILED_SL": {
+        "count": 1,
+        "pips": 40.58
+      },
+      "GIVEBACK_GUARD": {
+        "count": 1,
+        "pips": 4.94
+      }
+    },
+    "months": {
+      "01": 14.479999999999997,
+      "02": -73.12
+    },
+    "earliest": "06:00"
+  },
+  "B": {
+    "count": 18,
+    "wr": 55.55555555555556,
+    "pf": 1.240020862308762,
+    "pips": 69.02999999999999,
+    "expectancy": 3.834999999999999,
+    "avg_win": 35.663,
+    "avg_loss": 35.95,
+    "setups": {
+      "CHOCH": {
+        "count": 9,
+        "pips": 88.99000000000001
+      },
+      "LH_LL_CONTINUATION": {
+        "count": 3,
+        "pips": -24.590000000000003
+      },
+      "HH_HL_CONTINUATION": {
+        "count": 2,
+        "pips": -23.799999999999997
+      },
+      "LIQUIDITY_SWEEP_REVERSAL": {
+        "count": 1,
+        "pips": 59.58
+      },
+      "LIQUIDITY_GRAB_CONTINUATION": {
+        "count": 3,
+        "pips": -31.15
+      }
+    },
+    "exits": {
+      "TRAILED_SL": {
+        "count": 6,
+        "pips": 244.26
+      },
+      "GIVEBACK_GUARD": {
+        "count": 5,
+        "pips": 79.13
+      },
+      "SL_HIT": {
+        "count": 7,
+        "pips": -254.36
+      }
+    },
+    "months": {
+      "01": 133.34,
+      "02": -64.31
+    },
+    "earliest": "13:30"
+  },
+  "C": {
+    "count": 16,
+    "wr": 62.5,
+    "pf": 1.9184003496503497,
+    "pips": 210.13,
+    "expectancy": 13.133125,
+    "avg_win": 43.893,
+    "avg_loss": 38.13333333333333,
+    "setups": {
+      "CHOCH": {
+        "count": 15,
+        "pips": 198.84999999999997
+      },
+      "LIQUIDITY_SWEEP_REVERSAL": {
+        "count": 1,
+        "pips": 11.28
+      }
+    },
+    "exits": {
+      "SL_HIT": {
+        "count": 6,
+        "pips": -228.8
+      },
+      "TRAILED_SL": {
+        "count": 6,
+        "pips": 332.41
+      },
+      "GIVEBACK_GUARD": {
+        "count": 4,
+        "pips": 106.52000000000001
+      }
+    },
+    "months": {
+      "01": 163.97,
+      "02": 46.15999999999998
+    },
+    "earliest": "16:05"
+  }
+}

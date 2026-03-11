@@ -196,17 +196,36 @@ class ICTStrategy:
 
     def in_kill_zone(self, now: datetime = None) -> Tuple[bool, str]:
         """Returns (is_in_kill_zone, zone_name). Times are UTC unless you pass localized 'now'."""
-        if not self.cfg.get("kill_zones", {}).get("enabled", True):
+        kz_cfg = self.cfg.get("kill_zones", {})
+        if not kz_cfg.get("enabled", True):
             return True, "ALWAYS"
 
         if now is None:
             now = datetime.now(timezone.utc)
 
         t = now.time()
+
+        def parse_time(t_str, default_h):
+            try:
+                h, m = map(int, t_str.split(":"))
+                return dtime(h, m)
+            except:
+                return dtime(default_h, 0)
+
+        # Build dynamic zones from config
         zones = {
-            "LONDON_OPEN":  (dtime(7, 0),  dtime(10, 0)),
-            "NY_OPEN":      (dtime(12, 0), dtime(15, 0)),
-            "LONDON_CLOSE": (dtime(15, 0), dtime(17, 0)),
+            "LONDON_OPEN": (
+                parse_time(kz_cfg.get("london_open", {}).get("start", "07:00"), 7),
+                parse_time(kz_cfg.get("london_open", {}).get("end", "10:00"), 10)
+            ),
+            "NY_OPEN": (
+                parse_time(kz_cfg.get("ny_open", {}).get("start", "12:00"), 12),
+                parse_time(kz_cfg.get("ny_open", {}).get("end", "15:00"), 15)
+            ),
+            "LONDON_CLOSE": (
+                parse_time(kz_cfg.get("london_close", {}).get("start", "15:00"), 15),
+                parse_time(kz_cfg.get("london_close", {}).get("end", "17:00"), 17)
+            ),
         }
 
         for name, (start, end) in zones.items():

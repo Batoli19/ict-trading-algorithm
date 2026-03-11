@@ -454,6 +454,15 @@ class BacktestEngine:
         logger.info(f"Trailing stops: {'ON' if self.use_trailing else 'OFF'}")
         logger.info(f"Max open trades: {self.max_open_trades}")
 
+        # True ICT Timing Debug Print
+        kz_cfg = self.config.get("ict", {}).get("kill_zones", {})
+        lo = kz_cfg.get("london_open", {})
+        ny = kz_cfg.get("ny_open", {})
+        lc = kz_cfg.get("london_close", {})
+        logger.info(f"KZ_TIMES: london_open={lo.get('start', '07:00')}-{lo.get('end', '10:00')} "
+                    f"ny_open={ny.get('start', '12:00')}-{ny.get('end', '15:00')} "
+                    f"london_close={lc.get('start', '15:00')}-{lc.get('end', '17:00')}")
+
         # ─── Load all candle data from CSV files ───────────────────────
         for symbol in symbols:
             self.replay.load(symbol)
