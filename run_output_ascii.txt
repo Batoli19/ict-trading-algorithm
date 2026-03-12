@@ -1,0 +1,130 @@
+?python : 2026-03-12 13:11:17,357  CONFIG_TRAILING: risk.trailing_stop disabled 
+because trailing_structure.enabled=true
+At line:1 char:1
++ python scripts\run_pass13a.py > run_output.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-03-12 13:1...re.enabled=true:String 
+   ) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+2026-03-12 13:11:17,404  Trailing manager: ON (structure-based trailing)
+2026-03-12 13:11:17,414  Starting backtest for 5 symbols: ['GBPUSD', 'USDJPY', 
+'AUDUSD', 'EURUSD', 'GBPJPY']
+2026-03-12 13:11:17,414  Sniper filter: ON
+2026-03-12 13:11:17,414  Kill zone only: ON
+2026-03-12 13:11:17,414  Disabled setups: ['HH_HL_CONTINUATION', 
+'LH_LL_CONTINUATION', 'LIQUIDITY_GRAB_CONTINUATION', 'PIN_BAR']
+2026-03-12 13:11:17,414  Trailing stops: ON
+2026-03-12 13:11:17,415  Max open trades: 3
+2026-03-12 13:11:17,415  KZ_TIMES: london_open=06:00-09:00 ny_open=13:30-16:00 
+london_close=15:00-17:00
+2026-03-12 13:11:17,516  Loaded 2,046 candles: GBPUSD_H4
+2026-03-12 13:11:17,921  Loaded 8,161 candles: GBPUSD_H1
+2026-03-12 13:11:19,655  Loaded 32,636 candles: GBPUSD_M15
+2026-03-12 13:11:28,633  Loaded 97,560 candles: GBPUSD_M5
+2026-03-12 13:11:36,636  Loaded 87,660 candles: GBPUSD_M1
+2026-03-12 13:11:36,870  Loaded 2,046 candles: USDJPY_H4
+2026-03-12 13:11:37,688  Loaded 8,161 candles: USDJPY_H1
+2026-03-12 13:11:40,319  Loaded 32,636 candles: USDJPY_M15
+2026-03-12 13:11:48,669  Loaded 97,558 candles: USDJPY_M5
+2026-03-12 13:11:56,363  Loaded 87,663 candles: USDJPY_M1
+2026-03-12 13:11:56,550  Loaded 2,046 candles: AUDUSD_H4
+2026-03-12 13:11:57,264  Loaded 8,161 candles: AUDUSD_H1
+2026-03-12 13:11:59,896  Loaded 32,638 candles: AUDUSD_M15
+2026-03-12 13:12:07,442  Loaded 97,559 candles: AUDUSD_M5
+2026-03-12 13:12:13,717  Loaded 87,807 candles: AUDUSD_M1
+2026-03-12 13:12:13,862  Loaded 2,046 candles: EURUSD_H4
+2026-03-12 13:12:14,342  Loaded 8,161 candles: EURUSD_H1
+2026-03-12 13:12:15,823  Loaded 32,638 candles: EURUSD_M15
+2026-03-12 13:12:19,962  Loaded 97,559 candles: EURUSD_M5
+2026-03-12 13:12:23,024  Loaded 87,658 candles: EURUSD_M1
+2026-03-12 13:12:23,097  Loaded 2,046 candles: GBPJPY_H4
+2026-03-12 13:12:23,362  Loaded 8,161 candles: GBPJPY_H1
+2026-03-12 13:12:24,447  Loaded 32,627 candles: GBPJPY_M15
+2026-03-12 13:12:27,909  Loaded 97,558 candles: GBPJPY_M5
+2026-03-12 13:12:31,919  Loaded 87,664 candles: GBPJPY_M1
+2026-03-12 13:12:31,975  Processing GBPUSD: 97,314 M5 bars (2024-11-05 to 2026-02-27)
+2026-03-12 13:12:35,420  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+51.0 pips | 
+peak_R=0.95 now_R=0.86 gb=0.09
+2026-03-12 13:12:39,703  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+11.9 pips | 
+peak_R=0.56 now_R=0.41 gb=0.26
+2026-03-12 13:12:42,773  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+11.9 pips | 
+peak_R=3.63 now_R=2.25 gb=0.38
+2026-03-12 13:12:42,780  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+33.4 pips | 
+peak_R=0.54 now_R=0.51 gb=0.05
+2026-03-12 13:12:45,213  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+15.6 pips | 
+peak_R=1.54 now_R=1.01 gb=0.34
+2026-03-12 13:12:45,222  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+33.6 pips | 
+peak_R=0.70 now_R=0.56 gb=0.20
+2026-03-12 13:13:12,634  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+20.7 pips | peak_R=0.95 
+now_R=0.65 gb=0.32
+2026-03-12 13:13:14,849    GBPUSD: bar 5,000/97,314 (2024-11-28) | trades=11 open=0
+2026-03-12 13:13:16,238  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+22.9 pips | peak_R=0.52 
+now_R=0.48 gb=0.08
+2026-03-12 13:13:17,793  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+31.4 pips | peak_R=2.36 
+now_R=2.31 gb=0.02
+2026-03-12 13:13:20,610  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+43.1 pips | 
+peak_R=0.68 now_R=0.61 gb=0.11
+2026-03-12 13:13:26,429  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+9.0 pips | peak_R=0.52 
+now_R=0.23 gb=0.56
+2026-03-12 13:13:33,311  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+36.6 pips | 
+peak_R=0.57 now_R=0.51 gb=0.10
+2026-03-12 13:13:36,118  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+13.5 pips | peak_R=0.53 
+now_R=0.50 gb=0.06
+2026-03-12 13:13:36,131  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+6.8 pips | peak_R=0.78 
+now_R=0.67 gb=0.15
+2026-03-12 13:13:36,198  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+24.1 pips | 
+peak_R=0.61 now_R=0.60 gb=0.02
+2026-03-12 13:13:43,269  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+18.3 pips | peak_R=0.55 
+now_R=0.46 gb=0.16
+2026-03-12 13:13:44,593  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+10.9 pips | peak_R=3.07 
+now_R=1.31 gb=0.57
+2026-03-12 13:14:07,420    GBPUSD: bar 10,000/97,314 (2024-12-23) | trades=24 open=1
+2026-03-12 13:14:07,422  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+12.3 pips | 
+peak_R=0.51 now_R=0.42 gb=0.17
+2026-03-12 13:14:15,767  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+27.2 pips | peak_R=0.61 
+now_R=0.40 gb=0.35
+2026-03-12 13:14:21,740  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=-0.9 pips | peak_R=0.56 
+now_R=-0.08 gb=1.15
+2026-03-12 13:14:21,758  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+29.5 pips | 
+peak_R=0.57 now_R=0.47 gb=0.18
+2026-03-12 13:14:30,054  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+47.1 pips | 
+peak_R=0.84 now_R=0.82 gb=0.02
+2026-03-12 13:14:36,408  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+68.3 pips | 
+peak_R=0.66 now_R=0.62 gb=0.05
+2026-03-12 13:14:39,705  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+3.1 pips | peak_R=0.55 
+now_R=0.41 gb=0.24
+2026-03-12 13:14:47,375  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+21.6 pips | peak_R=0.60 
+now_R=0.49 gb=0.19
+2026-03-12 13:14:55,709    GBPUSD: bar 15,000/97,314 (2025-01-21) | trades=39 open=0
+2026-03-12 13:14:57,444  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+9.5 pips | peak_R=0.68 
+now_R=0.57 gb=0.17
+2026-03-12 13:15:03,129  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+19.7 pips | peak_R=0.52 
+now_R=0.39 gb=0.25
+2026-03-12 13:15:28,325  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+25.7 pips | 
+peak_R=0.51 now_R=0.37 gb=0.26
+2026-03-12 13:15:30,892  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+11.3 pips | 
+peak_R=2.73 now_R=2.42 gb=0.11
+2026-03-12 13:15:30,967  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+22.7 pips | 
+peak_R=0.52 now_R=0.43 gb=0.18
+2026-03-12 13:15:39,052    GBPUSD: bar 20,000/97,314 (2025-02-13) | trades=49 open=0
+2026-03-12 13:15:47,560  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+28.4 pips | 
+peak_R=0.61 now_R=0.60 gb=0.01
+2026-03-12 13:15:49,378  GIVEBACK_GUARD EXIT: GBPUSD BUY pnl=+16.9 pips | peak_R=0.60 
+now_R=0.59 gb=0.02
+2026-03-12 13:15:52,044  GIVEBACK_GUARD EXIT: GBPUSD SELL pnl=+22.4 pips | 
+peak_R=0.85 now_R=0.82 gb=0.03
+============================================================
+PASS 13A: PERSONALITY A BACKTEST (Nov 2024 - Feb 2026)
+=====================================================================
+
+PERSONALITY A CONFIG:
+  Pairs:         ['GBPUSD', 'USDJPY', 'AUDUSD', 'EURUSD', 'GBPJPY']
+  Disabled Setups: 4 (PIN_BAR, LH_LL_CONTINUATION, HH_HL_CONTINUATION, LIQUIDITY_GRAB_CONTINUATION)
+  Kill zones:    ['LONDON_OPEN', 'NY_OPEN', 'LONDON_CLOSE']
+  Direction:     NONE (both ways all pairs)
+  Daily limit:   DISABLED
+  Giveback:      1.0% at 0.5R
+  Date range:    2024-11-05 -> 2026-02-28
+  Data dir:      data/m5_xm
+============================================================

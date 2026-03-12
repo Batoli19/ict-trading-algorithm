@@ -1,0 +1,8 @@
+MT5 module imported OK
+initialize() = True
+last_error = (1, 'Success')
+login() = True
+last_error = (1, 'Success')
+Account: 1301048395, Balance: 5000.0
+Got 10 recent GBPUSD M5 bars
+Latest bar time: 1773319500

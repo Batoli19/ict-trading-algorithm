@@ -1,0 +1,39 @@
+{
+    "label": "Personality_A",
+    "pairs": ["GBPUSD", "USDJPY", "AUDUSD", "EURUSD", "GBPJPY"],
+    "data_dir": "data/m5_xm",
+    "date_from": "2024-11-05",
+    "date_to": "2026-02-28",
+    "disabled_setups": [
+        "PIN_BAR",
+        "LH_LL_CONTINUATION",
+        "HH_HL_CONTINUATION",
+        "LIQUIDITY_GRAB_CONTINUATION"
+    ],
+    "allowed_kill_zones": ["LONDON_OPEN", "NY_OPEN", "LONDON_CLOSE"],
+    "direction_filters": {},
+    "same_regime_limit": 1,
+    "trade_management": {
+        "partials": {
+            "enabled": true,
+            "tp1_r": 1.0,
+            "tp1_close_pct": 0.6,
+            "tp1_sl_mode": "BE_PLUS",
+            "tp1_be_plus_r": 0.5,
+            "trail_only_after_tp1": true
+        },
+        "giveback_guard": {
+            "enabled": true,
+            "activate_at_r": 0.5,
+            "max_giveback_pct": 0.01
+        }
+    },
+    "execution": {
+        "min_rr": 1.5,
+        "enforce_killzones": true
+    },
+    "risk": {
+        "risk_per_trade_pct": 1.0,
+        "daily_loss_limit_pct": null
+    }
+}
