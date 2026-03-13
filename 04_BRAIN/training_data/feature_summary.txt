@@ -1,0 +1,43 @@
+Feature Extraction Summary
+==========================
+Total Trades Loaded: 6652
+Overall Win Rate: 55.74%
+Features Extracted: 17
+
+Feature List:
+- symbol
+- direction
+- setup_type
+- kill_zone
+- exit_reason
+- hour_utc
+- day_of_week
+- week_of_month
+- month
+- is_monday
+- is_friday
+- is_gbpusd_sell
+- is_usdjpy_buy
+- is_eurusd
+- direction_aligned
+- outcome_binary
+- outcome_pips
+
+Missing Values:
+symbol               0
+direction            0
+setup_type           0
+kill_zone            0
+exit_reason          0
+hour_utc             0
+day_of_week          0
+week_of_month        0
+month                0
+is_monday            0
+is_friday            0
+is_gbpusd_sell       0
+is_usdjpy_buy        0
+is_eurusd            0
+direction_aligned    0
+outcome_binary       0
+outcome_pips         0

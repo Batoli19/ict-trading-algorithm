@@ -1,0 +1,10 @@
+WHAT EACH SETUP DOES
+=====================
+
+The bot looks for extremely specific patterns on the charts. Currently, it focuses heavily on two main setups.
+
+1. CHOCH (Change of Character)
+Imagine the price is steadily going down, making a staircase pattern downwards. Suddenly, it breaks the staircase and surges upwards past the last "step". This abrupt shift in momentum is called a Change of Character. It signals that the sellers are exhausted and buyers are stepping in. The bot waits for this specific break and then enters a trade in the new direction.
+
+2. LSR (Liquidity Sweep Reversal / Turtle Soup)
+The market is driven by liquidity (where people place their stop-loss orders). Often, the market will aggressively spike above an old high to "trap" retail traders into buying (and hit the stop-losses of early sellers). Immediately after this "sweep", the large institutions reverse the price back down. The LSR setup detects this exact fake-out and trades the reversal, riding along with the "smart money" instead of getting trapped.

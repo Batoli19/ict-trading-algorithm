@@ -1,0 +1,23 @@
+HOW TO READ THE BOT RESULTS
+===========================
+
+Whenever testing or checking the bot's performance, you will see a bunch of numbers. Here is what the most important ones mean.
+
+PROFIT FACTOR (PF):
+This is the most critical metric. It tells you how much money the bot makes for every dollar it loses.
+- A PF of 1.0 means it broke even (made $1 for every $1 lost).
+- A PF of 1.5 means the bot made $1.50 for every $1 it lost.
+Anything above 1.2 is good, and above 1.5 is excellent.
+
+WIN RATE:
+This is simply the percentage of trades that were profitable. 
+You might see a win rate like 64% and think "that doesn't sound that high," but a 64% win rate is actually fantastic. Because the bot usually makes more money on its winning trades than it loses on its losing trades, a 64% or even a 50% win rate can be highly profitable!
+
+PIPS TO DOLLARS:
+"Pips" are the points of movement in the market. Depending on your lot size, pips translate to dollars. For a standard trade risking 1% on a standard lot, you can often estimate that roughly 10 pips = $100, though this varies by currency pair and risk parameters. The bot calculates its performance in pips so it scales independently of the account size.
+
+MONTHLY TABLES:
+In the backtest CSVs, you will see breakdowns of the bot's performance month-by-month. This is to ensure the bot is consistent. A good strategy will be profitable in most months, rather than making all its money in one lucky month and losing in the rest.
+
+GIVEBACK GUARD ('GIVEBACK_GUARD' EXIT REASON):
+Sometimes you'll see a trade was closed due to a "GIVEBACK_GUARD". What this means is the trade was heavily in profit, but the market suddenly reversed. Rather than letting a huge winning trade turn into a full loss, the Giveback Guard stepped in and closed the trade automatically to protect the remaining profit. It's a sign the bot is protecting your capital intelligently.

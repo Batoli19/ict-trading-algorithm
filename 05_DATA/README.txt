@@ -1,0 +1,1 @@
+This folder contains all the historical price data used by the Backtester and the Brain. It primarily holds 5-minute (M5) candle data exported from MetaTrader 5 (e.g. from the XM broker). This data acts as the memory bank from which the bot is tested and trained.

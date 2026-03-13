@@ -1,0 +1,17 @@
+BRAIN UPGRADE PLAN
+==================
+
+WHY THE BOT NEEDS A BRAIN:
+Right now, the bot trades strictly on hardcoded rules. While this works, it can't adapt easily. We are giving the bot a "brain" so it can act like a student: analyzing its own historical tests, figuring out what makes a trade a winner or a loser, and adjusting its approach.
+
+THE THREE LEARNERS:
+1. Entry Learner (XGBoost Classifier): This looks at the conditions right before a trade is taken (time of day, day of week, which setup it is). It learns which combinations lead to wins and scores upcoming trades with a "win probability".
+2. Exit Learner (Reinforcement Agent): Once in a trade, this learner determines the best time to exit. Instead of static trailing stops, it uses a Q-table to figure out whether it's statistically better to HOLD the trade or EXIT right now based on how many pips in profit it currently is.
+3. Parameter Evolver (Genetic Algorithm): Instead of a human manually typing in endless combinations of risk numbers and targets to see what works, this algorithm simulates evolution. It takes varied parameters, runs them, keeps the "fittest" (most profitable), and evolves them to find the absolute best settings.
+
+HOW TO RUN THE TRAINING:
+You simply need to run `run_full_brain_pipeline.py`. 
+You don't need to know how to code. It will automatically load the historical data, train all three learners, validate the new parameters, and report back to you.
+
+WHAT TO DO ONCE TRAINED:
+If the brain reports that it has improved the Profit Factor (PF) over the baseline (e.g. from 1.16 to 1.34), it will automatically save these new smart filters and models into the `04_BRAIN/models/` folder. The live bot can then be updated to consult these models before placing trades, effectively leveling up its intelligence.

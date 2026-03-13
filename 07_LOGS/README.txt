@@ -1,0 +1,1 @@
+This folder will contain the daily activity logs when the Bot is running live. If anything goes wrong or if you need to trace why a specific trade was or was not taken, you can find the detailed logs here.

@@ -1,0 +1,1 @@
+This folder contains the master configurations and settings for the bot. `settings.json` is the sole source of truth for adjusting parameters like risk percentage, allowed forex pairs, enabled setups, kill-zone times, and MetaTrader 5 login credentials. Ensure any edits to settings.json are done carefully, and keep a backup in case things break!

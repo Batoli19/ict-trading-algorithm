@@ -1,0 +1,25 @@
+HOW THE BOT WORKS (A Plain English Guide)
+===========================================
+
+WHAT IT DOES:
+The bot analyzes the Forex market specifically looking for particular "price action" setups. Instead of trading randomly, it waits patiently for specific patterns to emerge on the chart that indicate a high probability of a successful trade. Once it identifies a valid pattern, it will automatically enter a trade (either buying or selling).
+
+WHEN IT TRADES:
+The bot only trades during specific "Kill Zones," which are times of day when there is typically high trading volume and clear market movement.
+It trades during:
+- London Open (morning session)
+- London Close (evening session)
+
+HOW IT DECIDES:
+The bot has strict rules. It looks at the overall massive trend on a longer timeframe to decide whether it should be looking for buy or sell opportunities. Then, it zooms into a shorter timeframe (like 5 minutes) and waits for a specific setup pattern (like a CHOCH or LSR—see the SETUP guide) to trigger. It also measures "confidence"—if the setup meets all the strict criteria, it enters the trade.
+
+HOW IT MANAGES RISK:
+Risk management is the most important part of the bot.
+- It risks only 1% of the account on any single trade (for example, on a $5,000 account, it risks $50).
+- It sets an automatic Stop-Loss, which is an emergency exit price. If the trade goes against it, it simply exits and takes the small loss instead of blowing up the account. 
+- It sets an automatic Take-Profit, which is the target goal.
+- It also uses a "Giveback Guard" and Trailing Stop. As the trade becomes profitable, the bot will move the Stop-Loss up so that if the market suddenly reverses, the bot still exits with a small profit or breaks even.
+
+WHAT HAPPENS ON A WIN VS A LOSS:
+WIN: If the market moves in the predicted direction, the bot will take partial profits along the way or hit the final Take-Profit target to secure the money. The bot might implement a cooldown before trading again.
+LOSS: If the market moves against the bot, the Stop-Loss is hit, strictly capping the loss at 1%. The bot records this loss, analyzes what went wrong, and then waits for the next high-probability setup without revenge trading.
