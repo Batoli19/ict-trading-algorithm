@@ -1,4 +1,4 @@
-# 🤖 ICT Trading Bot
+# 🤖 ICT Trading Algorithm 
 
 <div align="center">
 
